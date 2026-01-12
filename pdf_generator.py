@@ -86,7 +86,16 @@ def generate_pdf_report(data: Dict[str, Any], user_id: int, affiliates_list: Lis
     address = data.get('address', {}).get('value', 'Не указан') if isinstance(data.get('address'), dict) else 'Не указан'
     manager_name = data.get('management', {}).get('name', 'Не указан') if data.get('management') else 'Не указан'
     manager_post = data.get('management', {}).get('post', '') if data.get('management') else ''
-    okved = data.get('okved', 'Н/Д')
+    
+    # ОКВЭД с расшифровкой
+    okved_code = data.get('okved', 'Н/Д')
+    okved_name = data.get('okved_type', '')
+    if not okved_name:
+        # Пробуем получить из okveds
+        okveds = data.get('okveds', [])
+        if okveds and isinstance(okveds, list) and len(okveds) > 0:
+            okved_name = okveds[0].get('name', '')
+    okved = f"{okved_code}" + (f" - {okved_name}" if okved_name else "")
     
     # Анализ рисков
     overall_emoji, overall_text, factors = analyze_risks(data)
@@ -181,17 +190,20 @@ def generate_pdf_report(data: Dict[str, Any], user_id: int, affiliates_list: Lis
     elements.append(fin_table)
     
     # === СВЯЗАННЫЕ КОМПАНИИ ===
-    if affiliates_list:
-        elements.append(Paragraph("<b>СВЯЗАННЫЕ КОМПАНИИ</b>", heading_style))
-        
+    elements.append(Paragraph("<b>СВЯЗАННЫЕ КОМПАНИИ</b>", heading_style))
+    
+    if affiliates_list and len(affiliates_list) > 0:
         count = len(affiliates_list)
         risk_text = "МАССОВЫЙ ДИРЕКТОР" if count >= 10 else ("Много связей" if count >= 5 else "Норма")
         elements.append(Paragraph(f"Руководитель связан еще с {count} компаниями. Оценка: {risk_text}", normal_style))
         
         aff_data = [["Компания", "ИНН", "Статус"]]
         for aff in affiliates_list[:10]:  # Максимум 10
-            status = "Действует" if aff.get('status_emoji') == "🟢" else "Не действует"
-            aff_data.append([aff.get('name', '?')[:40], aff.get('inn', '?'), status])
+            status = "Действует" if aff.get('status_emoji') == "🟢" or aff.get('status') == "ACTIVE" else "Не действует"
+            company_name_aff = aff.get('name', '?')
+            if len(company_name_aff) > 35:
+                company_name_aff = company_name_aff[:35] + "..."
+            aff_data.append([company_name_aff, aff.get('inn', '?'), status])
         
         if count > 10:
             aff_data.append([f"... и еще {count - 10} компаний", "", ""])
@@ -208,6 +220,8 @@ def generate_pdf_report(data: Dict[str, Any], user_id: int, affiliates_list: Lis
             ('TOPPADDING', (0, 0), (-1, -1), 4),
         ]))
         elements.append(aff_table)
+    else:
+        elements.append(Paragraph("Связанных компаний не найдено", normal_style))
     
     # === ПОДПИСЬ ===
     elements.append(Spacer(1, 30))
