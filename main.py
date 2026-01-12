@@ -12,7 +12,7 @@ from database import (
     add_check_history, get_check_history, get_user_stats
 )
 from risk_analyzer import format_risk_report, analyze_risks
-from affiliates import find_affiliates, format_affiliates
+from affiliates import find_affiliated_companies, format_affiliates_report
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -261,8 +261,8 @@ async def check_company(msg: Message):
         # Добавляем связанные компании
         mgr = data.get("management", {}).get("name", "")
         if mgr:
-            affs = find_affiliates(mgr, exclude_inn=data.get("inn"))
-            report += format_affiliates(mgr, affs)
+            affs = find_affiliated_companies(mgr, exclude_inn=data.get("inn"))
+            report += format_affiliates_report(mgr, affs)
         
         await msg.answer(report, parse_mode="Markdown")
         
