@@ -295,10 +295,10 @@ async def check_company(msg: Message):
         # Сохраняем в историю
         add_check_history(uid, inn, company_name, risk_level)
         
-        # Формируем отчет (уже включает affiliates)
+        # Базовый отчёт (название, светофор, финансы)
         report = format_risk_report(data)
         
-        # Получаем связанные компании только для PDF кеша
+        # Получаем связанные компании
         mgr = data.get("management", {}).get("name", "")
         affs = []
         if mgr:
@@ -307,7 +307,26 @@ async def check_company(msg: Message):
         # Расширенная проверка (ФССП, Арбитраж, ФНС)
         extended_data = check_company_extended(inn, mgr)
         extended_report = format_extended_report(extended_data)
+        
+        # Добавляем расширенные данные ПОСЛЕ финансов
         report += extended_report
+        
+        # Добавляем связанные компании
+        if affs:
+            report += format_affiliates_report(mgr, affs)
+        
+        # Добавляем директора, адрес, ОКВЭД и дату в конце
+        from okved import get_okved_name
+        address = data.get("address", {}).get("value", "Не указан") if isinstance(data.get("address"), dict) else "Не указан"
+        okved_code = data.get("okved", "Н/Д")
+        okved_name = get_okved_name(okved_code)
+        okved_full = f"{okved_code}" + (f" - {okved_name}" if okved_name else "")
+        
+        from datetime import datetime
+        report += f"\n\n**👤 Руководитель:** {mgr or 'Не указан'}"
+        report += f"\n**📍 Адрес:** {address}"
+        report += f"\n**🏭 ОКВЭД:** {okved_full}"
+        report += f"\n\n_Отчет сформирован: {datetime.now().strftime('%d.%m.%Y %H:%M')}_"
         
         # Кешируем данные для PDF (включая affiliates и extended)
         cache_key = f"{uid}_{inn}"

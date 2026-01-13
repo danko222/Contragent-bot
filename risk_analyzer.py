@@ -229,28 +229,6 @@ def format_risk_report(data: Dict[str, Any]) -> str:
     else:
         lines.append(f"  📊 Прибыль: Данных нет")
     
-    # Поиск аффилированных компаний
-    affiliates_report = ""
-    if manager_name and manager_name != "Не указан":
-        from affiliates import find_affiliated_companies, format_affiliates_report
-        affiliates = find_affiliated_companies(manager_name, exclude_inn=inn)
-        affiliates_report = format_affiliates_report(manager_name, affiliates)
-    
-    lines.extend([
-        f"",
-        f"**👤 Руководитель:** {manager_name}",
-        f"**📍 Адрес:** {address}",
-        f"**🏭 ОКВЭД:** {okved_full}",
-    ])
-    
-    # Добавляем информацию об аффилированных компаниях
-    if affiliates_report:
-        lines.append(affiliates_report)
-    
-    lines.extend([
-        f"",
-        f"_Отчет сформирован: {datetime.now().strftime('%d.%m.%Y %H:%M')}_",
-    ])
-    
+    # Возвращаем базовый отчёт (affiliates и footer добавляются в main.py)
     return "\n".join(lines)
 

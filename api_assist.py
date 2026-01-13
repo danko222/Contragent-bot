@@ -294,9 +294,19 @@ def format_extended_report(data: Dict[str, Any]) -> str:
     if data.get("arbitr"):
         parts.append(format_arbitr_report(data["arbitr"]))
     
-    # ФНС (только дисквалификация)
+    # ФНС - статус организации
+    nalog = data.get("nalog_org")
+    if nalog and nalog.get("found"):
+        status = nalog.get("status", "")
+        if status:
+            emoji = "🟢" if "Действующее" in status else "🔴"
+            parts.append(f"\n{emoji} **ФНС:** {status}")
+    
+    # Дисквалификация директора
     if data.get("disqualified"):
         if data["disqualified"].get("found"):
             parts.append("\n🔴 **Директор ДИСКВАЛИФИЦИРОВАН!**")
+        else:
+            parts.append("\n🟢 **Дисквалификация директора:** нет")
     
     return "".join(parts)
