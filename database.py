@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "bot.db")
 
@@ -17,10 +17,14 @@ def init_db():
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 first_name TEXT,
+                last_name TEXT,
+                phone TEXT,
                 checks_left INTEGER DEFAULT 3,
                 is_premium BOOLEAN DEFAULT 0,
                 premium_until TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_activity TEXT,
+                is_blocked BOOLEAN DEFAULT 0
             )
         """)
         # Таблица истории проверок
@@ -35,6 +39,34 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
+        # Таблица рассылок
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS broadcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_text TEXT,
+                sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                total_users INTEGER,
+                success_count INTEGER,
+                failed_count INTEGER
+            )
+        """)
+        # Миграция: добавляем новые колонки если их нет
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_name TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_activity TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_blocked BOOLEAN DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
 
 
@@ -142,3 +174,94 @@ def set_premium(user_id: int, until_date: str = None):
             (until_date, user_id)
         )
         conn.commit()
+
+
+# === Функции для управления клиентами и рассылок ===
+
+def update_last_activity(user_id: int):
+    """Обновляет время последней активности пользователя."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET last_activity = ?, is_blocked = 0 WHERE user_id = ?",
+            (datetime.now().isoformat(), user_id)
+        )
+        conn.commit()
+
+
+def mark_user_blocked(user_id: int):
+    """Помечает пользователя как заблокировавшего бота."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET is_blocked = 1 WHERE user_id = ?",
+            (user_id,)
+        )
+        conn.commit()
+
+
+def get_all_active_users():
+    """Получает всех активных пользователей для рассылки."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT user_id, username, first_name 
+            FROM users 
+            WHERE is_blocked = 0 OR is_blocked IS NULL
+        """)
+        return cursor.fetchall()
+
+
+def get_clients_stats():
+    """Получает статистику по клиентам для администратора."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        
+        # Всего пользователей
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total = cursor.fetchone()[0]
+        
+        # Активных за 7 дней
+        week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        cursor.execute(
+            "SELECT COUNT(*) FROM users WHERE last_activity > ?", 
+            (week_ago,)
+        )
+        active_7d = cursor.fetchone()[0]
+        
+        # Активных за 30 дней
+        month_ago = (datetime.now() - timedelta(days=30)).isoformat()
+        cursor.execute(
+            "SELECT COUNT(*) FROM users WHERE last_activity > ?",
+            (month_ago,)
+        )
+        active_30d = cursor.fetchone()[0]
+        
+        # Premium пользователей
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = 1")
+        premium = cursor.fetchone()[0]
+        
+        # Заблокировавших бота
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_blocked = 1")
+        blocked = cursor.fetchone()[0]
+        
+        return {
+            "total": total,
+            "active_7d": active_7d,
+            "active_30d": active_30d,
+            "premium": premium,
+            "blocked": blocked
+        }
+
+
+def log_broadcast(message_text: str, total: int, success: int, failed: int):
+    """Сохраняет лог рассылки."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO broadcasts (message_text, total_users, success_count, failed_count) 
+               VALUES (?, ?, ?, ?)""",
+            (message_text, total, success, failed)
+        )
+        conn.commit()
+

@@ -5,12 +5,16 @@ import json
 from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, FSInputFile
 from dotenv import load_dotenv
 from dadata import Dadata
 from database import (
     init_db, try_consume_check, is_admin, get_or_create_user,
-    add_check_history, get_check_history, get_user_stats
+    add_check_history, get_check_history, get_user_stats,
+    update_last_activity, get_all_active_users, get_clients_stats,
+    mark_user_blocked, log_broadcast
 )
 from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
@@ -26,19 +30,33 @@ dp = Dispatcher()
 pdf_data_cache = {}  # {cache_key: {'data': data, 'affiliates': affs}}
 
 
+# === FSM для рассылки ===
+class BroadcastStates(StatesGroup):
+    waiting_for_message = State()
+    confirm = State()
+
+
 # === Главное меню ===
-def get_main_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
+def get_main_keyboard(username: str = None):
+    buttons = [
         [InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile")],
         [InlineKeyboardButton(text="📜 История проверок", callback_data="history")],
         [InlineKeyboardButton(text="💎 Подписка", callback_data="subscribe")],
         [InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
-    ])
+    ]
+    # Админ-кнопки
+    if username and is_admin(username):
+        buttons.insert(0, [
+            InlineKeyboardButton(text="👥 Клиенты", callback_data="admin_clients"),
+            InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 @dp.message(Command("start"))
 async def cmd_start(msg: Message):
     user = get_or_create_user(msg.from_user.id, msg.from_user.username, msg.from_user.first_name)
+    update_last_activity(msg.from_user.id)
     name = msg.from_user.first_name or "друг"
     await msg.answer(
         f"👋 Привет, **{name}**!\n\n"
@@ -50,8 +68,9 @@ async def cmd_start(msg: Message):
         f"📊 Осталось проверок: **{user['checks_left']}**\n\n"
         "Отправь **ИНН компании** (10-12 цифр) для начала!",
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(msg.from_user.username)
     )
+
 
 
 @dp.message(Command("profile"))
@@ -215,8 +234,160 @@ async def cb_back(callback: CallbackQuery):
     await callback.message.answer(
         "📱 **Главное меню**\n\nОтправьте ИНН для проверки или выберите действие:",
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(callback.from_user.username)
     )
+
+
+# === Админ-панель ===
+@dp.message(Command("clients"))
+async def cmd_clients(msg: Message):
+    if not is_admin(msg.from_user.username):
+        return
+    await show_clients_stats(msg)
+
+
+@dp.callback_query(lambda c: c.data == "admin_clients")
+async def cb_admin_clients(callback: CallbackQuery):
+    if not is_admin(callback.from_user.username):
+        await callback.answer("⛔ Только для администраторов", show_alert=True)
+        return
+    await callback.answer()
+    await show_clients_stats(callback.message)
+
+
+async def show_clients_stats(msg: Message):
+    stats = get_clients_stats()
+    text = (
+        "👥 **Статистика клиентов**\n\n"
+        f"📊 **Всего пользователей:** {stats['total']}\n"
+        f"🟢 **Активных за 7 дней:** {stats['active_7d']}\n"
+        f"🔵 **Активных за 30 дней:** {stats['active_30d']}\n"
+        f"💎 **Premium:** {stats['premium']}\n"
+        f"🚫 **Заблокировали бота:** {stats['blocked']}\n"
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+    ])
+    await msg.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.username):
+        return
+    await start_broadcast(msg, state)
+
+
+@dp.callback_query(lambda c: c.data == "admin_broadcast")
+async def cb_admin_broadcast(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.username):
+        await callback.answer("⛔ Только для администраторов", show_alert=True)
+        return
+    await callback.answer()
+    await start_broadcast(callback.message, state)
+
+
+async def start_broadcast(msg: Message, state: FSMContext):
+    await state.set_state(BroadcastStates.waiting_for_message)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_broadcast")]
+    ])
+    await msg.answer(
+        "📢 **Рассылка сообщений**\n\n"
+        "Введите текст сообщения, которое будет отправлено всем пользователям.\n"
+        "Поддерживается Markdown форматирование.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+@dp.callback_query(lambda c: c.data == "cancel_broadcast")
+async def cb_cancel_broadcast(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer("Рассылка отменена")
+    await callback.message.answer(
+        "📱 **Главное меню**",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(callback.from_user.username)
+    )
+
+
+@dp.message(BroadcastStates.waiting_for_message)
+async def process_broadcast_message(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.username):
+        await state.clear()
+        return
+    
+    users = get_all_active_users()
+    await state.update_data(message_text=msg.text, user_count=len(users))
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Отправить", callback_data="confirm_broadcast")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_broadcast")]
+    ])
+    
+    await msg.answer(
+        f"📢 **Подтверждение рассылки**\n\n"
+        f"Получателей: **{len(users)}** пользователей\n\n"
+        f"───────────────\n"
+        f"{msg.text}\n"
+        f"───────────────\n\n"
+        "Отправить?",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+    await state.set_state(BroadcastStates.confirm)
+
+
+@dp.callback_query(lambda c: c.data == "confirm_broadcast", BroadcastStates.confirm)
+async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.username):
+        await state.clear()
+        return
+    
+    await callback.answer()
+    data = await state.get_data()
+    message_text = data.get("message_text", "")
+    
+    users = get_all_active_users()
+    total = len(users)
+    success = 0
+    failed = 0
+    
+    progress_msg = await callback.message.answer(f"⏳ Рассылка... (0/{total})")
+    
+    for i, (user_id, username, first_name) in enumerate(users):
+        try:
+            await bot.send_message(user_id, message_text, parse_mode="Markdown")
+            success += 1
+        except Exception as e:
+            failed += 1
+            if "blocked" in str(e).lower() or "deactivated" in str(e).lower():
+                mark_user_blocked(user_id)
+        
+        # Обновляем прогресс каждые 10 пользователей
+        if (i + 1) % 10 == 0:
+            try:
+                await progress_msg.edit_text(f"⏳ Рассылка... ({i + 1}/{total})")
+            except:
+                pass
+        
+        # Небольшая задержка чтобы не превышать лимиты Telegram
+        await asyncio.sleep(0.05)
+    
+    # Логируем рассылку
+    log_broadcast(message_text, total, success, failed)
+    
+    await progress_msg.delete()
+    await callback.message.answer(
+        f"✅ **Рассылка завершена!**\n\n"
+        f"• Успешно: {success}\n"
+        f"• Не доставлено: {failed}",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(callback.from_user.username)
+    )
+    await state.clear()
 
 
 # === Обработчик PDF ===
