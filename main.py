@@ -425,7 +425,12 @@ async def cb_download_pdf(callback: CallbackQuery):
 
 # === Проверка компании ===
 @dp.message(lambda m: m.text and m.text.isdigit() and len(m.text) in [10, 12])
-async def check_company(msg: Message):
+async def check_company(msg: Message, state: FSMContext):
+    # Пропускаем если пользователь в FSM состоянии (например, рассылка)
+    current_state = await state.get_state()
+    if current_state is not None:
+        return
+    
     uid = msg.from_user.id
     uname = msg.from_user.username
     admin = is_admin(uname)
