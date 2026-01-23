@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -15,12 +15,14 @@ from database import (
     add_check_history, get_check_history, get_user_stats,
     update_last_activity, get_all_active_users, get_clients_stats,
     mark_user_blocked, log_broadcast, increment_api_usage, get_api_usage,
-    reset_api_usage, ADMIN_USERNAMES
+    reset_api_usage, ADMIN_USERNAMES, save_payment, update_payment_status,
+    get_payment_by_id, set_premium
 )
 from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
 from pdf_generator import generate_pdf_report
 from api_assist import check_company_extended, format_extended_report
+from payment import create_payment, check_payment_status, get_tariff_days, TARIFFS
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -194,22 +196,139 @@ async def show_subscribe(msg: Message):
         "**💰 Стоимость:**\n"
         "• 1 неделя — 199 ₽\n"
         "• 1 месяц — 499 ₽\n"
-        "• 3 месяца — 999 ₽\n\n"
-        "_Оплата через ЮKassa (скоро)_"
+        "• 3 месяца — 1199 ₽ _(выгодно!)_\n\n"
+        "Выберите тариф для оплаты:"
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить 1 месяц — 499₽", callback_data="pay_month")],
-        [InlineKeyboardButton(text="💳 Оплатить 3 месяца — 999₽", callback_data="pay_3months")],
+        [InlineKeyboardButton(text="💳 1 неделя — 199₽", callback_data="pay_week")],
+        [InlineKeyboardButton(text="💳 1 месяц — 499₽", callback_data="pay_month")],
+        [InlineKeyboardButton(text="💳 3 месяца — 1199₽ 🔥", callback_data="pay_3months")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
     ])
     
     await msg.answer(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
-@dp.callback_query(lambda c: c.data.startswith("pay_"))
+@dp.callback_query(lambda c: c.data.startswith("pay_") and not c.data.startswith("pay_check_"))
 async def cb_pay(callback: CallbackQuery):
-    await callback.answer("⏳ Платежи скоро будут доступны!", show_alert=True)
+    tariff = callback.data.replace("pay_", "")
+    
+    if tariff not in TARIFFS:
+        await callback.answer("❌ Неизвестный тариф", show_alert=True)
+        return
+    
+    await callback.answer("⏳ Создаю платёж...")
+    
+    user_id = callback.from_user.id
+    tariff_info = TARIFFS[tariff]
+    
+    # Создаём платёж в ЮKassa
+    result = create_payment(user_id, tariff)
+    
+    if not result.get("success"):
+        await callback.message.answer(
+            f"❌ Ошибка создания платежа: {result.get('error', 'Неизвестная ошибка')}\n\n"
+            "Попробуйте позже или обратитесь в поддержку: @zegnas",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Сохраняем платёж в БД
+    save_payment(user_id, result["payment_id"], tariff, result["amount"])
+    
+    # Отправляем ссылку на оплату
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Перейти к оплате", url=result["confirmation_url"])],
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"pay_check_{result['payment_id']}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="subscribe")]
+    ])
+    
+    await callback.message.answer(
+        f"💳 **Оплата подписки**\n\n"
+        f"**Тариф:** {tariff_info['description']}\n"
+        f"**Сумма:** {result['amount']} ₽\n\n"
+        f"Нажмите кнопку ниже для перехода к оплате.\n"
+        f"После оплаты нажмите **\"Я оплатил\"** для активации подписки.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith("pay_check_"))
+async def cb_check_payment(callback: CallbackQuery):
+    payment_id = callback.data.replace("pay_check_", "")
+    await callback.answer("⏳ Проверяю оплату...")
+    
+    user_id = callback.from_user.id
+    
+    # Проверяем статус платежа в ЮKassa
+    result = check_payment_status(payment_id)
+    
+    if not result.get("success"):
+        await callback.message.answer(
+            "❌ Ошибка проверки платежа. Попробуйте ещё раз.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    if result.get("paid") and result.get("status") == "succeeded":
+        # Платёж успешен — активируем подписку
+        payment_data = get_payment_by_id(payment_id)
+        
+        if payment_data and payment_data["status"] != "succeeded":
+            tariff = payment_data["tariff"]
+            days = get_tariff_days(tariff)
+            
+            # Устанавливаем премиум
+            until_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+            set_premium(user_id, until_date)
+            
+            # Обновляем статус платежа
+            update_payment_status(payment_id, "succeeded")
+            
+            await callback.message.answer(
+                f"🎉 **Оплата прошла успешно!**\n\n"
+                f"Ваша подписка активирована до **{until_date}**\n\n"
+                f"Теперь вам доступны:\n"
+                f"• ♾️ Безлимитные проверки\n"
+                f"• 📄 Все PDF-отчёты\n\n"
+                f"Спасибо за покупку! 💎",
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard(callback.from_user.username)
+            )
+        else:
+            await callback.message.answer(
+                "✅ Эта подписка уже была активирована ранее.",
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard(callback.from_user.username)
+            )
+    elif result.get("status") == "pending":
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Проверить ещё раз", callback_data=f"pay_check_{payment_id}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="subscribe")]
+        ])
+        await callback.message.answer(
+            "⏳ **Ожидание оплаты**\n\n"
+            "Оплата ещё не поступила. Если вы уже оплатили, подождите минуту и нажмите **\"Проверить ещё раз\"**.",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+    elif result.get("status") == "canceled":
+        await callback.message.answer(
+            "❌ **Платёж отменён**\n\n"
+            "Попробуйте оформить подписку заново.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Подписка", callback_data="subscribe")]
+            ])
+        )
+    else:
+        await callback.message.answer(
+            f"⚠️ Статус платежа: {result.get('status', 'неизвестен')}\n\n"
+            "Если возникли проблемы, обратитесь в поддержку: @zegnas",
+            parse_mode="Markdown"
+        )
 
 
 @dp.callback_query(lambda c: c.data == "help")

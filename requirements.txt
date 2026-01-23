@@ -2,3 +2,5 @@ aiogram>=3.0.0
 python-dotenv
 dadata
 requests
+yookassa
+reportlab

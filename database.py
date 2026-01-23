@@ -86,6 +86,21 @@ def init_db():
             INSERT OR IGNORE INTO api_usage (service_name, total_limit, alert_threshold, reset_date)
             VALUES ('zachestnyibiznes', 500000, 5000, DATE('now', '+1 year'))
         """)
+        
+        # Таблица платежей
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                payment_id TEXT UNIQUE,
+                tariff TEXT,
+                amount TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                paid_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
         conn.commit()
 
 
@@ -396,3 +411,79 @@ def set_api_limit(service_name: str, total_limit: int, alert_threshold: int = 50
             (total_limit, alert_threshold, datetime.now().isoformat(), service_name)
         )
         conn.commit()
+
+
+# === Функции для работы с платежами ===
+
+def save_payment(user_id: int, payment_id: str, tariff: str, amount: str) -> bool:
+    """Сохраняет информацию о созданном платеже."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """INSERT INTO payments (user_id, payment_id, tariff, amount, status)
+                   VALUES (?, ?, ?, ?, 'pending')""",
+                (user_id, payment_id, tariff, amount)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def update_payment_status(payment_id: str, status: str) -> bool:
+    """Обновляет статус платежа."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        paid_at = datetime.now().isoformat() if status == 'succeeded' else None
+        cursor.execute(
+            """UPDATE payments SET status = ?, paid_at = ? WHERE payment_id = ?""",
+            (status, paid_at, payment_id)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_pending_payment(user_id: int) -> dict:
+    """Получает последний ожидающий платёж пользователя."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT payment_id, tariff, amount, created_at 
+               FROM payments 
+               WHERE user_id = ? AND status = 'pending'
+               ORDER BY created_at DESC LIMIT 1""",
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return {
+                "payment_id": row[0],
+                "tariff": row[1],
+                "amount": row[2],
+                "created_at": row[3]
+            }
+        return None
+
+
+def get_payment_by_id(payment_id: str) -> dict:
+    """Получает платёж по ID."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT user_id, tariff, amount, status, created_at, paid_at
+               FROM payments WHERE payment_id = ?""",
+            (payment_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return {
+                "user_id": row[0],
+                "tariff": row[1],
+                "amount": row[2],
+                "status": row[3],
+                "created_at": row[4],
+                "paid_at": row[5]
+            }
+        return None
+
