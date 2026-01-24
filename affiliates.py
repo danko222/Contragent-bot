@@ -88,20 +88,9 @@ def format_affiliates_report(manager_name: str, affiliates: List[Dict[str, Any]]
     
     count = len(affiliates)
     
-    # Определяем уровень риска по количеству компаний
-    if count >= 10:
-        risk_emoji = "🔴"
-        risk_text = "МАССОВЫЙ ДИРЕКТОР"
-    elif count >= 5:
-        risk_emoji = "🟡"
-        risk_text = "Много компаний"
-    else:
-        risk_emoji = "🟢"
-        risk_text = "Норма"
-    
     lines = [
         f"",
-        f"**🔗 Связанные компании ({risk_emoji} {risk_text}):**",
+        f"**🔗 Связанные компании:**",
         f"Руководитель связан еще с **{count}** компаниями:",
     ]
     
