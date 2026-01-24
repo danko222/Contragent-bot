@@ -7,7 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, FSInputFile
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from dadata import Dadata
 from database import (
@@ -31,6 +31,20 @@ dp = Dispatcher()
 
 # Хранилище данных для PDF (временное, по user_id)
 pdf_data_cache = {}  # {cache_key: {'data': data, 'affiliates': affs}}
+
+
+# Постоянная клавиатура внизу экрана
+def get_persistent_menu():
+    """ Клавиатура которая всегда видна внизу чата """
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📊 Проверить ИНН"), KeyboardButton(text="👤 Профиль")],
+            [KeyboardButton(text="📜 История"), KeyboardButton(text="⭐ Избранное")],
+            [KeyboardButton(text="💎 Подписка"), KeyboardButton(text="❓ Помощь")]
+        ],
+        resize_keyboard=True,
+        is_persistent=True
+    )
 
 
 # === FSM для рассылки ===
@@ -62,6 +76,8 @@ async def cmd_start(msg: Message):
     user = get_or_create_user(msg.from_user.id, msg.from_user.username, msg.from_user.first_name)
     update_last_activity(msg.from_user.id)
     name = msg.from_user.first_name or "друг"
+    
+    # Отправляем приветствие с постоянной клавиатурой
     await msg.answer(
         f"👋 Привет, **{name}**!\n\n"
         "Я проверяю контрагентов по ИНН и показываю:\n"
@@ -72,9 +88,60 @@ async def cmd_start(msg: Message):
         f"📊 Осталось проверок: **{user['checks_left']}**\n\n"
         "Отправь **ИНН компании** (10-12 цифр) для начала!",
         parse_mode="Markdown",
+        reply_markup=get_persistent_menu()
+    )
+    # Также отправляем inline-меню
+    await msg.answer(
+        "📱 **Главное меню:**",
+        parse_mode="Markdown",
         reply_markup=get_main_keyboard(msg.from_user.username)
     )
 
+
+# === Обработчики текстовых кнопок (постоянная клавиатура) ===
+@dp.message(lambda m: m.text == "📊 Проверить ИНН")
+async def btn_check_inn(msg: Message):
+    await msg.answer(
+        "🔍 **Проверка контрагента**\n\n"
+        "Отправьте **ИНН компании** (10 или 12 цифр):",
+        parse_mode="Markdown"
+    )
+
+
+@dp.message(lambda m: m.text == "👤 Профиль")
+async def btn_profile(msg: Message):
+    await cmd_profile(msg)
+
+
+@dp.message(lambda m: m.text == "📜 История")
+async def btn_history(msg: Message):
+    await cmd_history(msg)
+
+
+@dp.message(lambda m: m.text == "⭐ Избранное")
+async def btn_favorites(msg: Message):
+    await show_favorites(msg, msg.from_user.id)
+
+
+@dp.message(lambda m: m.text == "💎 Подписка")
+async def btn_subscribe(msg: Message):
+    await show_subscribe(msg)
+
+
+@dp.message(lambda m: m.text == "❓ Помощь")
+async def btn_help(msg: Message):
+    await msg.answer(
+        "❓ **Помощь**\n\n"
+        "**Как проверить компанию:**\n"
+        "Просто отправьте ИНН (10-12 цифр)\n\n"
+        "**Команды:**\n"
+        "/start — Главное меню\n"
+        "/profile — Ваш профиль\n"
+        "/history — История проверок\n"
+        "/subscribe — Подписка\n\n"
+        "**Связь:** @zegnas",
+        parse_mode="Markdown"
+    )
 
 
 @dp.message(Command("profile"))
