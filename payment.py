@@ -61,6 +61,8 @@ def create_payment(user_id: int, tariff: str, return_url: str = None, payment_me
             "type": payment_method_type
         }
     
+    logging.info(f"Creating payment with data: {payment_data}")
+
     try:
         payment = Payment.create(payment_data, idempotence_key)
         return {

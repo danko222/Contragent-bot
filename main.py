@@ -239,63 +239,67 @@ async def cb_pay(callback: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("pay_method_"))
 async def cb_payment_method(callback: CallbackQuery):
-    # формат: pay_method_{tariff}_{method_type}
-    data = callback.data.replace("pay_method_", "")
-    parts = data.split("_")
-    
-    # Обработка sbp и bank_card (у bank_card sbp_card состоит из 2 частей)
-    if "sbp" in data:
-        tariff = data.replace("_sbp", "")
-        method_type = "sbp"
-    elif "bank_card" in data:
-        tariff = data.replace("_bank_card", "")
-        method_type = "bank_card"
-    else:
-        await callback.answer("❌ Ошибка выбора метода", show_alert=True)
-        return
+    try:
+        # формат: pay_method_{tariff}_{method_type}
+        data = callback.data.replace("pay_method_", "")
+        parts = data.split("_")
+        
+        # Обработка sbp и bank_card (у bank_card sbp_card состоит из 2 частей)
+        if "sbp" in data:
+            tariff = data.replace("_sbp", "")
+            method_type = "sbp"
+        elif "bank_card" in data:
+            tariff = data.replace("_bank_card", "")
+            method_type = "bank_card"
+        else:
+            await callback.answer("❌ Ошибка выбора метода", show_alert=True)
+            return
 
-    if tariff not in TARIFFS:
-        await callback.answer("❌ Неизвестный тариф", show_alert=True)
-        return
+        if tariff not in TARIFFS:
+            await callback.answer("❌ Неизвестный тариф", show_alert=True)
+            return
 
-    await callback.answer("⏳ Создаю платёж...")
-    
-    user_id = callback.from_user.id
-    tariff_info = TARIFFS[tariff]
-    
-    # Создаём платёж в ЮKassa с указанным методом
-    result = create_payment(user_id, tariff, payment_method_type=method_type)
-    
-    if not result.get("success"):
-        await callback.message.answer(
-            f"❌ Ошибка создания платежа: {result.get('error', 'Неизвестная ошибка')}\n\n"
-            "Попробуйте позже или обратитесь в поддержку: @zegnas",
-            parse_mode="Markdown"
+        await callback.answer("⏳ Создаю платёж...")
+        
+        user_id = callback.from_user.id
+        tariff_info = TARIFFS[tariff]
+        
+        # Создаём платёж в ЮKassa с указанным методом
+        result = create_payment(user_id, tariff, payment_method_type=method_type)
+        
+        if not result.get("success"):
+            # Не используем Markdown для ошибок, так как текст ошибки может содержать спецсимволы
+            await callback.message.answer(
+                f"❌ Ошибка создания платежа: {result.get('error', 'Неизвестная ошибка')}\n\n"
+                "Попробуйте позже или обратитесь в поддержку: @zegnas"
+            )
+            return
+        
+        # Сохраняем платёж в БД
+        save_payment(user_id, result["payment_id"], tariff, result["amount"])
+        
+        # Отправляем ссылку на оплату
+        method_name = "СБП" if method_type == "sbp" else "Банковская карта"
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💳 Оплатить через {method_name}", url=result["confirmation_url"])],
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"pay_check_{result['payment_id']}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="subscribe")]
+        ])
+        
+        await callback.message.edit_text(
+            f"💳 **Оплата подписки**\n\n"
+            f"**Тариф:** {tariff_info['description']}\n"
+            f"**Сумма:** {result['amount']} ₽\n"
+            f"**Способ:** {method_name}\n\n"
+            f"Нажмите кнопку ниже для перехода к оплате.\n"
+            f"После оплаты нажмите **\"Я оплатил\"** для активации подписки.",
+            parse_mode="Markdown",
+            reply_markup=keyboard
         )
-        return
-    
-    # Сохраняем платёж в БД
-    save_payment(user_id, result["payment_id"], tariff, result["amount"])
-    
-    # Отправляем ссылку на оплату
-    method_name = "СБП" if method_type == "sbp" else "Банковская карта"
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💳 Оплатить через {method_name}", url=result["confirmation_url"])],
-        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"pay_check_{result['payment_id']}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="subscribe")]
-    ])
-    
-    await callback.message.edit_text(
-        f"💳 **Оплата подписки**\n\n"
-        f"**Тариф:** {tariff_info['description']}\n"
-        f"**Сумма:** {result['amount']} ₽\n"
-        f"**Способ:** {method_name}\n\n"
-        f"Нажмите кнопку ниже для перехода к оплате.\n"
-        f"После оплаты нажмите **\"Я оплатил\"** для активации подписки.",
-        parse_mode="Markdown",
-        reply_markup=keyboard
-    )
+    except Exception as e:
+        logging.error(f"Error in cb_payment_method: {e}")
+        await callback.message.answer(f"❌ Произошла ошибка: {str(e)}")
 
 
 @dp.callback_query(lambda c: c.data.startswith("pay_check_"))
