@@ -40,7 +40,7 @@ TARIFFS = {
 }
 
 
-def create_payment(user_id: int, tariff: str, return_url: str = None) -> dict:
+def create_payment(user_id: int, tariff: str, return_url: str = None, payment_method_type: str = None) -> dict:
     if tariff not in TARIFFS:
         raise ValueError(f"Unknown tariff: {tariff}")
     
@@ -54,6 +54,12 @@ def create_payment(user_id: int, tariff: str, return_url: str = None) -> dict:
         "description": tariff_info["description"],
         "metadata": {"user_id": str(user_id), "tariff": tariff}
     }
+
+    # Если указан конкретный метод оплаты (sbp или bank_card)
+    if payment_method_type:
+        payment_data["payment_method_data"] = {
+            "type": payment_method_type
+        }
     
     try:
         payment = Payment.create(payment_data, idempotence_key)
