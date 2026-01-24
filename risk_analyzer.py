@@ -43,12 +43,12 @@ def analyze_risks(data: Dict[str, Any]) -> Tuple[str, str, List[Dict[str, Any]]]
     # 1. Статус компании
     status = data.get('state', {}).get('status', 'UNKNOWN')
     if status == 'ACTIVE':
-        factors.append({"name": "Статус", "value": "Действующая", "emoji": "✓"})
+        factors.append({"name": "Статус", "value": "Действующая", "emoji": "✅"})
     elif status == 'LIQUIDATING':
-        factors.append({"name": "Статус", "value": "В процессе ликвидации", "emoji": "✗"})
+        factors.append({"name": "Статус", "value": "В процессе ликвидации", "emoji": "❌"})
         critical_issues += 1
     else:
-        factors.append({"name": "Статус", "value": "Ликвидирована/Банкрот", "emoji": "✗"})
+        factors.append({"name": "Статус", "value": "Ликвидирована/Банкрот", "emoji": "❌"})
         critical_issues += 1
     
     # 2. Возраст компании
@@ -57,41 +57,41 @@ def analyze_risks(data: Dict[str, Any]) -> Tuple[str, str, List[Dict[str, Any]]]
     age_years = age_days // 365
     
     if age_days < 180:  # Меньше 6 месяцев
-        factors.append({"name": "Возраст", "value": f"{age_days} дней", "emoji": "✗"})
+        factors.append({"name": "Возраст", "value": f"{age_days} дней", "emoji": "❌"})
         critical_issues += 1
     elif age_days < 365:  # Меньше года
-        factors.append({"name": "Возраст", "value": f"{age_days} дней", "emoji": "⚠"})
+        factors.append({"name": "Возраст", "value": f"{age_days} дней", "emoji": "⚠️"})
         warnings += 1
     else:
-        factors.append({"name": "Возраст", "value": f"{age_years} лет", "emoji": "✓"})
+        factors.append({"name": "Возраст", "value": f"{age_years} лет", "emoji": "✅"})
     
     # 3. Недостоверные сведения (общий флаг)
     invalid = data.get('invalid')
     if invalid:
-        factors.append({"name": "Достоверность", "value": "Есть недостоверные сведения!", "emoji": "✗"})
+        factors.append({"name": "Достоверность", "value": "Есть недостоверные сведения!", "emoji": "❌"})
         critical_issues += 1
     else:
-        factors.append({"name": "Достоверность", "value": "Сведения достоверны", "emoji": "✓"})
+        factors.append({"name": "Достоверность", "value": "Сведения достоверны", "emoji": "✅"})
     
     # 4. Проверка адреса
     address_data = data.get('address', {})
     if isinstance(address_data, dict):
         address_qc = address_data.get('data', {}).get('qc') if isinstance(address_data.get('data'), dict) else None
         if address_qc is not None and address_qc != 0:
-            factors.append({"name": "Адрес", "value": "Проблемы с адресом", "emoji": "⚠"})
+            factors.append({"name": "Адрес", "value": "Проблемы с адресом", "emoji": "⚠️"})
             warnings += 1
         else:
-            factors.append({"name": "Адрес", "value": "Адрес подтвержден", "emoji": "✓"})
+            factors.append({"name": "Адрес", "value": "Адрес подтвержден", "emoji": "✅"})
     
     # 5. Уставный капитал
     capital = data.get('capital', {})
     if isinstance(capital, dict):
         capital_value = capital.get('value', 0) or 0
         if capital_value < 10000:
-            factors.append({"name": "Уставный капитал", "value": f"{capital_value:,.0f} ₽".replace(",", " "), "emoji": "⚠"})
+            factors.append({"name": "Уставный капитал", "value": f"{capital_value:,.0f} ₽".replace(",", " "), "emoji": "⚠️"})
             warnings += 1
         else:
-            factors.append({"name": "Уставный капитал", "value": f"{capital_value:,.0f} ₽".replace(",", " "), "emoji": "✓"})
+            factors.append({"name": "Уставный капитал", "value": f"{capital_value:,.0f} ₽".replace(",", " "), "emoji": "✅"})
     
     # 6. Руководитель и дата назначения
     manager = data.get('management', {})
@@ -117,17 +117,17 @@ def analyze_risks(data: Dict[str, Any]) -> Tuple[str, str, List[Dict[str, Any]]]
             date_str = format_date_from_timestamp(manager_date)
             
             if manager_days < 90:  # Меньше 3 месяцев
-                factors.append({"name": "Руководитель", "value": f"Назначен {date_str} (недавно!)", "emoji": "⚠"})
+                factors.append({"name": "Руководитель", "value": f"Назначен {date_str} (недавно!)", "emoji": "⚠️"})
                 warnings += 1
             elif manager_days < 365:  # Меньше года
-                factors.append({"name": "Руководитель", "value": f"Назначен {date_str}", "emoji": "✓"})
+                factors.append({"name": "Руководитель", "value": f"Назначен {date_str}", "emoji": "✅"})
             else:
                 years = manager_days // 365
-                factors.append({"name": "Руководитель", "value": f"Назначен {date_str} ({years} лет)", "emoji": "✓"})
+                factors.append({"name": "Руководитель", "value": f"Назначен {date_str} ({years} лет)", "emoji": "✅"})
         else:
-            factors.append({"name": "Руководитель", "value": "Указан (дата неизвестна)", "emoji": "✓"})
+            factors.append({"name": "Руководитель", "value": "Указан (дата неизвестна)", "emoji": "✅"})
     else:
-        factors.append({"name": "Руководитель", "value": "Не указан", "emoji": "⚠"})
+        factors.append({"name": "Руководитель", "value": "Не указан", "emoji": "⚠️"})
         warnings += 1
     
     # Итоговый индикатор риска (галочки на цветном фоне)

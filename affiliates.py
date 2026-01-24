@@ -96,7 +96,7 @@ def format_affiliates_report(manager_name: str, affiliates: List[Dict[str, Any]]
     
     # Показываем первые 5
     for company in affiliates[:5]:
-        lines.append(f"  • {company['name']} (ИНН: {company['inn']})")
+        lines.append(f"  {company['status_emoji']} {company['name']} (ИНН: {company['inn']})")
     
     if count > 5:
         lines.append(f"  _...и еще {count - 5} компаний_")
