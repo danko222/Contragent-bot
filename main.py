@@ -215,15 +215,17 @@ async def show_favorites(msg: Message, user_id: int):
     await msg.answer(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
-@dp.callback_query(lambda c: c.data.startswith("fav_"))
+@dp.callback_query(lambda c: c.data.startswith("fav_") and not c.data.startswith("favorites"))
 async def cb_add_favorite(callback: CallbackQuery):
     """Добавляет компанию в избранное."""
-    data = callback.data.replace("fav_", "")
-    parts = data.split("_", 1)
-    inn = parts[0]
-    company_name = parts[1] if len(parts) > 1 else "Компания"
-    
+    inn = callback.data.replace("fav_", "")
     user_id = callback.from_user.id
+    
+    # Получаем название компании из кеша
+    cache_key = f"{user_id}_{inn}"
+    cached = pdf_data_cache.get(cache_key, {})
+    company_name = cached.get('company_name', 'Компания')
+    
     if add_favorite(user_id, inn, company_name):
         await callback.answer("⭐ Добавлено в избранное!", show_alert=False)
     else:
@@ -878,14 +880,12 @@ async def check_company(msg: Message, state: FSMContext):
         
         # Кешируем данные для PDF (включая affiliates и extended)
         cache_key = f"{uid}_{inn}"
-        pdf_data_cache[cache_key] = {'data': data, 'affiliates': affs, 'extended': extended_data}
+        pdf_data_cache[cache_key] = {'data': data, 'affiliates': affs, 'extended': extended_data, 'company_name': company_name}
         
         # Кнопки для PDF и избранного
-        # Обрезаем название компании для callback_data (макс 64 байта)
-        short_company = company_name[:30] if len(company_name) > 30 else company_name
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📄 Скачать PDF-отчет", callback_data=f"pdf_{inn}")],
-            [InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_{inn}_{short_company}")]
+            [InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_{inn}")]
         ])
         
         await msg.answer(report, parse_mode="Markdown", reply_markup=keyboard)
