@@ -34,14 +34,23 @@ pdf_data_cache = {}  # {cache_key: {'data': data, 'affiliates': affs}}
 
 
 # Постоянная клавиатура внизу экрана
-def get_persistent_menu():
-    """ Клавиатура которая всегда видна внизу чата """
+def get_persistent_menu(username: str = None):
+    """Клавиатура которая всегда видна внизу чата. Для админов добавлены доп. кнопки."""
+    keyboard = [
+        [KeyboardButton(text="📊 Проверить ИНН"), KeyboardButton(text="👤 Профиль")],
+        [KeyboardButton(text="📜 История"), KeyboardButton(text="⭐ Избранное")],
+        [KeyboardButton(text="💎 Подписка"), KeyboardButton(text="❓ Помощь")]
+    ]
+    
+    # Админ-кнопки только для админов
+    if username and is_admin(username):
+        keyboard.insert(0, [
+            KeyboardButton(text="👥 Клиенты"),
+            KeyboardButton(text="📢 Рассылка")
+        ])
+    
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📊 Проверить ИНН"), KeyboardButton(text="👤 Профиль")],
-            [KeyboardButton(text="📜 История"), KeyboardButton(text="⭐ Избранное")],
-            [KeyboardButton(text="💎 Подписка"), KeyboardButton(text="❓ Помощь")]
-        ],
+        keyboard=keyboard,
         resize_keyboard=True,
         is_persistent=True
     )
@@ -53,48 +62,31 @@ class BroadcastStates(StatesGroup):
     confirm = State()
 
 
-# === Главное меню ===
-def get_main_keyboard(username: str = None):
-    buttons = [
-        [InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="📜 История проверок", callback_data="history"),
-         InlineKeyboardButton(text="⭐ Избранное", callback_data="favorites")],
-        [InlineKeyboardButton(text="💎 Подписка", callback_data="subscribe")],
-        [InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
-    ]
-    # Админ-кнопки
-    if username and is_admin(username):
-        buttons.insert(0, [
-            InlineKeyboardButton(text="👥 Клиенты", callback_data="admin_clients"),
-            InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")
-        ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
 @dp.message(Command("start"))
 async def cmd_start(msg: Message):
     user = get_or_create_user(msg.from_user.id, msg.from_user.username, msg.from_user.first_name)
     update_last_activity(msg.from_user.id)
     name = msg.from_user.first_name or "друг"
     
-    # Отправляем приветствие с постоянной клавиатурой
+    # Определяем статус проверок
+    if is_admin(msg.from_user.username):
+        checks_info = "∞ Безлимит (админ)"
+    elif user['is_premium']:
+        checks_info = "∞ Безлимит"
+    else:
+        checks_info = f"{user['checks_left']} бесплатных"
+    
     await msg.answer(
         f"👋 Привет, **{name}**!\n\n"
-        "Я проверяю контрагентов по ИНН и показываю:\n"
+        "🔍 Проверяю контрагентов по ИНН:\n"
         "• 🚦 Светофор рисков\n"
-        "• 💰 Финансы компании\n"
+        "• 💰 Финансы\n"
         "• 🔗 Связанные компании\n"
-        "• 📄 PDF-отчет\n\n"
-        f"📊 Осталось проверок: **{user['checks_left']}**\n\n"
-        "Отправь **ИНН компании** (10-12 цифр) для начала!",
+        "• 📄 PDF-отчёт\n\n"
+        f"📊 Проверок: **{checks_info}**\n\n"
+        "Отправьте **ИНН** для продолжения ⤵️",
         parse_mode="Markdown",
-        reply_markup=get_persistent_menu()
-    )
-    # Также отправляем inline-меню
-    await msg.answer(
-        "📱 **Главное меню:**",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard(msg.from_user.username)
+        reply_markup=get_persistent_menu(msg.from_user.username)
     )
 
 
@@ -142,6 +134,21 @@ async def btn_help(msg: Message):
         "**Связь:** @zegnas",
         parse_mode="Markdown"
     )
+
+
+# === Админские кнопки (текстовые) ===
+@dp.message(lambda m: m.text == "👥 Клиенты")
+async def btn_clients(msg: Message):
+    if not is_admin(msg.from_user.username):
+        return
+    await cmd_clients(msg)
+
+
+@dp.message(lambda m: m.text == "📢 Рассылка")
+async def btn_broadcast(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.username):
+        return
+    await cmd_broadcast(msg, state)
 
 
 @dp.message(Command("profile"))
@@ -536,8 +543,7 @@ async def cb_check_payment(callback: CallbackQuery):
         else:
             await callback.message.answer(
                 "✅ Эта подписка уже была активирована ранее.",
-                parse_mode="Markdown",
-                reply_markup=get_main_keyboard(callback.from_user.username)
+                parse_mode="Markdown"
             )
     elif result.get("status") == "pending":
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -588,9 +594,8 @@ async def cb_help(callback: CallbackQuery):
 async def cb_back(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer(
-        "📱 **Главное меню**\n\nОтправьте ИНН для проверки или выберите действие:",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard(callback.from_user.username)
+        "📱 **Главное меню**\n\nОтправьте ИНН для проверки ⤵️",
+        parse_mode="Markdown"
     )
 
 
@@ -741,9 +746,8 @@ async def cb_cancel_broadcast(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer("Рассылка отменена")
     await callback.message.answer(
-        "📱 **Главное меню**",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard(callback.from_user.username)
+        "❌ Рассылка отменена.",
+        parse_mode="Markdown"
     )
 
 
@@ -818,8 +822,7 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
         f"✅ **Рассылка завершена!**\n\n"
         f"• Успешно: {success}\n"
         f"• Не доставлено: {failed}",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard(callback.from_user.username)
+        parse_mode="Markdown"
     )
     await state.clear()
 
