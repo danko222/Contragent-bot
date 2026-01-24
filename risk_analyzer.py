@@ -130,15 +130,15 @@ def analyze_risks(data: Dict[str, Any]) -> Tuple[str, str, List[Dict[str, Any]]]
         factors.append({"name": "Руководитель", "value": "Не указан", "emoji": "⚠️"})
         warnings += 1
     
-    # Итоговый индикатор риска (галочки на цветном фоне)
+    # Итоговый индикатор риска (круглый светофор)
     if critical_issues > 0:
-        overall_emoji = "❌"
+        overall_emoji = "🔴"
         overall_text = "Высокий риск"
     elif warnings >= 2:
-        overall_emoji = "⚠️"
+        overall_emoji = "🟡"
         overall_text = "Средний риск"
     else:
-        overall_emoji = "✅"
+        overall_emoji = "🟢"
         overall_text = "Низкий риск"
     
     return overall_emoji, overall_text, factors
