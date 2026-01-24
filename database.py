@@ -101,6 +101,19 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
+        
+        # Таблица избранных компаний
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                inn TEXT,
+                company_name TEXT,
+                added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, inn),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
         conn.commit()
 
 
@@ -487,3 +500,57 @@ def get_payment_by_id(payment_id: str) -> dict:
             }
         return None
 
+
+# === Функции для работы с избранным ===
+
+def add_favorite(user_id: int, inn: str, company_name: str) -> bool:
+    """Добавляет компанию в избранное."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """INSERT INTO favorites (user_id, inn, company_name) VALUES (?, ?, ?)""",
+                (user_id, inn, company_name)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False  # Уже в избранном
+
+
+def remove_favorite(user_id: int, inn: str) -> bool:
+    """Удаляет компанию из избранного."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """DELETE FROM favorites WHERE user_id = ? AND inn = ?""",
+            (user_id, inn)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_favorites(user_id: int, limit: int = 20) -> list:
+    """Получает список избранных компаний пользователя."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT inn, company_name, added_at 
+               FROM favorites 
+               WHERE user_id = ? 
+               ORDER BY added_at DESC 
+               LIMIT ?""",
+            (user_id, limit)
+        )
+        return cursor.fetchall()
+
+
+def is_favorite(user_id: int, inn: str) -> bool:
+    """Проверяет, есть ли компания в избранном."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT 1 FROM favorites WHERE user_id = ? AND inn = ?""",
+            (user_id, inn)
+        )
+        return cursor.fetchone() is not None

@@ -16,7 +16,7 @@ from database import (
     update_last_activity, get_all_active_users, get_clients_stats,
     mark_user_blocked, log_broadcast, increment_api_usage, get_api_usage,
     reset_api_usage, ADMIN_USERNAMES, save_payment, update_payment_status,
-    get_payment_by_id, set_premium
+    get_payment_by_id, set_premium, add_favorite, remove_favorite, get_favorites, is_favorite
 )
 from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
@@ -43,7 +43,8 @@ class BroadcastStates(StatesGroup):
 def get_main_keyboard(username: str = None):
     buttons = [
         [InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="📜 История проверок", callback_data="history")],
+        [InlineKeyboardButton(text="📜 История проверок", callback_data="history"),
+         InlineKeyboardButton(text="⭐ Избранное", callback_data="favorites")],
         [InlineKeyboardButton(text="💎 Подписка", callback_data="subscribe")],
         [InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
     ]
@@ -174,6 +175,115 @@ async def show_history(msg: Message, user_id: int = None):
     await msg.answer(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
+# === Избранное ===
+@dp.callback_query(lambda c: c.data == "favorites")
+async def cb_favorites(callback: CallbackQuery):
+    await callback.answer()
+    await show_favorites(callback.message, callback.from_user.id)
+
+
+async def show_favorites(msg: Message, user_id: int):
+    """Показывает список избранных компаний."""
+    favorites_list = get_favorites(user_id, 10)
+    
+    if not favorites_list:
+        await msg.answer(
+            "⭐ **Избранные компании**\n\n"
+            "У вас пока нет избранных компаний.\n\n"
+            "После проверки компании нажмите ⭐ чтобы добавить её в избранное.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+            ])
+        )
+        return
+    
+    text = "⭐ **Избранные компании:**\n\n"
+    buttons = []
+    
+    for inn, name, added_at in favorites_list:
+        short_name = name[:25] + "..." if len(name) > 25 else name
+        text += f"• **{short_name}**\n  ИНН: `{inn}`\n\n"
+        buttons.append([
+            InlineKeyboardButton(text=f"🔍 {short_name}", callback_data=f"recheck_{inn}"),
+            InlineKeyboardButton(text="❌", callback_data=f"unfav_{inn}")
+        ])
+    
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    await msg.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+
+
+@dp.callback_query(lambda c: c.data.startswith("fav_"))
+async def cb_add_favorite(callback: CallbackQuery):
+    """Добавляет компанию в избранное."""
+    data = callback.data.replace("fav_", "")
+    parts = data.split("_", 1)
+    inn = parts[0]
+    company_name = parts[1] if len(parts) > 1 else "Компания"
+    
+    user_id = callback.from_user.id
+    if add_favorite(user_id, inn, company_name):
+        await callback.answer("⭐ Добавлено в избранное!", show_alert=False)
+    else:
+        await callback.answer("Уже в избранном", show_alert=False)
+
+
+@dp.callback_query(lambda c: c.data.startswith("unfav_"))
+async def cb_remove_favorite(callback: CallbackQuery):
+    """Удаляет компанию из избранного."""
+    inn = callback.data.replace("unfav_", "")
+    user_id = callback.from_user.id
+    
+    if remove_favorite(user_id, inn):
+        await callback.answer("❌ Удалено из избранного")
+        await show_favorites(callback.message, user_id)
+    else:
+        await callback.answer("Ошибка удаления")
+
+
+@dp.callback_query(lambda c: c.data.startswith("recheck_"))
+async def cb_recheck(callback: CallbackQuery):
+    """Быстрая перепроверка компании из избранного или истории."""
+    inn = callback.data.replace("recheck_", "")
+    await callback.answer(f"⏳ Проверяю {inn}...")
+    
+    # Симулируем сообщение с ИНН для повторной проверки
+    # Создаём фейковый объект с нужными данными
+    from types import SimpleNamespace
+    fake_msg = SimpleNamespace()
+    fake_msg.text = inn
+    fake_msg.from_user = callback.from_user
+    fake_msg.answer = callback.message.answer
+    
+    # Вызываем обычную проверку
+    from aiogram.fsm.context import FSMContext
+    # Просто отправляем инструкцию пользователю
+    await callback.message.answer(
+        f"🔍 Для проверки отправьте ИНН:\n\n`{inn}`",
+        parse_mode="Markdown"
+    )
+
+
+# === Валидация ИНН ===
+@dp.message(lambda m: m.text and m.text.isdigit() and len(m.text) not in [10, 12] and 5 <= len(m.text) <= 15)
+async def invalid_inn_handler(msg: Message, state: FSMContext):
+    """Обработчик неправильного количества цифр в ИНН."""
+    current_state = await state.get_state()
+    if current_state is not None:
+        return
+    
+    digit_count = len(msg.text)
+    await msg.answer(
+        f"❌ **Неверный формат ИНН**\n\n"
+        f"Вы ввели: {digit_count} цифр\n"
+        f"ИНН должен содержать **10** (юрлицо) или **12** (ИП) цифр.\n\n"
+        f"Проверьте и отправьте корректный ИНН.",
+        parse_mode="Markdown"
+    )
+
+
 @dp.message(Command("subscribe"))
 async def cmd_subscribe(msg: Message):
     await show_subscribe(msg)
@@ -196,14 +306,16 @@ async def show_subscribe(msg: Message):
         "**💰 Стоимость:**\n"
         "• 1 неделя — 199 ₽\n"
         "• 1 месяц — 499 ₽\n"
-        "• 3 месяца — 1199 ₽ _(выгодно!)_\n\n"
+        "• 3 месяца — 1199 ₽ _(экономия 20%)_\n"
+        "• 1 год — 3499 ₽ _(экономия 42%!)_ 🔥\n\n"
         "Выберите тариф для оплаты:"
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 1 неделя — 199₽", callback_data="pay_week")],
         [InlineKeyboardButton(text="💳 1 месяц — 499₽", callback_data="pay_month")],
-        [InlineKeyboardButton(text="💳 3 месяца — 1199₽ 🔥", callback_data="pay_3months")],
+        [InlineKeyboardButton(text="💳 3 месяца — 1199₽", callback_data="pay_3months")],
+        [InlineKeyboardButton(text="💳 1 год — 3499₽ 🔥", callback_data="pay_year")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
     ])
     
@@ -334,15 +446,23 @@ async def cb_check_payment(callback: CallbackQuery):
             # Обновляем статус платежа
             update_payment_status(payment_id, "succeeded")
             
+            # Кнопки после успешной оплаты с призывом к действию
+            success_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔍 Проверить ИНН", callback_data="prompt_inn")],
+                [InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile")],
+                [InlineKeyboardButton(text="📜 История проверок", callback_data="history")]
+            ])
+            
             await callback.message.answer(
                 f"🎉 **Оплата прошла успешно!**\n\n"
                 f"Ваша подписка активирована до **{until_date}**\n\n"
                 f"Теперь вам доступны:\n"
                 f"• ♾️ Безлимитные проверки\n"
                 f"• 📄 Все PDF-отчёты\n\n"
-                f"Спасибо за покупку! 💎",
+                f"Спасибо за покупку! 💎\n\n"
+                f"**Отправьте ИНН компании** для проверки:",
                 parse_mode="Markdown",
-                reply_markup=get_main_keyboard(callback.from_user.username)
+                reply_markup=success_keyboard
             )
         else:
             await callback.message.answer(
@@ -402,6 +522,17 @@ async def cb_back(callback: CallbackQuery):
         "📱 **Главное меню**\n\nОтправьте ИНН для проверки или выберите действие:",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard(callback.from_user.username)
+    )
+
+
+@dp.callback_query(lambda c: c.data == "prompt_inn")
+async def cb_prompt_inn(callback: CallbackQuery):
+    """Обработчик кнопки 'Проверить ИНН' — приглашает пользователя ввести ИНН."""
+    await callback.answer()
+    await callback.message.answer(
+        "🔍 **Проверка контрагента**\n\n"
+        "Отправьте **ИНН компании** (10 или 12 цифр) для проверки:",
+        parse_mode="Markdown"
     )
 
 
@@ -682,7 +813,14 @@ async def check_company(msg: Message, state: FSMContext):
         return
     
     user = get_or_create_user(uid, uname, msg.from_user.first_name)
-    left = "👑 Безлимит" if admin else f"Осталось: {user['checks_left']}"
+    
+    # Определяем статус проверок
+    if admin:
+        left = "👑 Безлимит"
+    elif user['is_premium']:
+        left = "💎 Безлимит"
+    else:
+        left = f"Осталось: {user['checks_left']}"
     
     await msg.answer(f"⏳ Ищу компанию... ({left})")
     
@@ -742,9 +880,12 @@ async def check_company(msg: Message, state: FSMContext):
         cache_key = f"{uid}_{inn}"
         pdf_data_cache[cache_key] = {'data': data, 'affiliates': affs, 'extended': extended_data}
         
-        # Кнопка для PDF
+        # Кнопки для PDF и избранного
+        # Обрезаем название компании для callback_data (макс 64 байта)
+        short_company = company_name[:30] if len(company_name) > 30 else company_name
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📄 Скачать PDF-отчет", callback_data=f"pdf_{inn}")]
+            [InlineKeyboardButton(text="📄 Скачать PDF-отчет", callback_data=f"pdf_{inn}")],
+            [InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_{inn}_{short_company}")]
         ])
         
         await msg.answer(report, parse_mode="Markdown", reply_markup=keyboard)

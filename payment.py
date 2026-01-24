@@ -36,6 +36,11 @@ TARIFFS = {
         "amount": "1199.00",
         "description": "Подписка на 3 месяца",
         "days": 90
+    },
+    "year": {
+        "amount": "3499.00",
+        "description": "Подписка на 1 год",
+        "days": 365
     }
 }
 
