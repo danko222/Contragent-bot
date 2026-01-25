@@ -429,6 +429,8 @@ def format_company_report(result: Dict[str, Any]) -> str:
     
     # Финансы
     lines.append(f"\n💰 **Финансы:**")
+    if card.get("capital") and float(card.get("capital") or 0) > 0:
+        lines.append(f"  💵 Уставный капитал: {format_number(card['capital'])}")
     if finances.get("has_data"):
         lines.append(f"  📈 Выручка: {format_number(finances['revenue'])}")
         lines.append(f"  📊 Прибыль: {format_number(finances['profit'])}")
@@ -475,8 +477,7 @@ def format_company_report(result: Dict[str, Any]) -> str:
     if card.get("okved"):
         okved_name = card.get('okved_name', '')[:30]
         lines.append(f"  🏭 ОКВЭД: {card['okved']} - {okved_name}")
-    if card.get("capital") and float(card.get("capital") or 0) > 0:
-        lines.append(f"  💵 Уставный капитал: {format_number(card['capital'])}")
+    
     
     lines.append(f"\n_Отчёт: {datetime.now().strftime('%d.%m.%Y %H:%M')}_")
     
