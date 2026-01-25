@@ -267,6 +267,7 @@ def format_number(num) -> str:
 def format_company_report(result: Dict[str, Any]) -> str:
     """
     Форматирует полный отчёт о компании для Telegram.
+    Включает светофор рисков, финансы, ФССП, арбитраж, связи.
     """
     if not result.get("success"):
         return f"❌ Ошибка: {result.get('error', 'Unknown error')}"
@@ -281,91 +282,138 @@ def format_company_report(result: Dict[str, Any]) -> str:
     arb = parse_arbitration(data)
     affiliates = parse_affiliates(data)
     
-    # Определяем общий уровень риска
-    risk_emoji = "🟢"
-    risk_text = "НИЗКИЙ РИСК"
+    # === СВЕТОФОР РИСКОВ ===
+    risk_factors = []
+    overall_risk = "low"
     
-    if rating.get("risk_level"):
-        level = rating["risk_level"].upper()
-        if "ВЫСОК" in level or "КРИТИЧ" in level:
-            risk_emoji = "🔴"
-            risk_text = "ВЫСОКИЙ РИСК"
-        elif "СРЕДН" in level:
-            risk_emoji = "🟡"
-            risk_text = "СРЕДНИЙ РИСК"
-    elif fssp["count"] > 0 and fssp["total_sum"] > 100000:
-        risk_emoji = "🔴"
-        risk_text = "ВЫСОКИЙ РИСК"
-    elif arb["as_defendant"] > 3:
-        risk_emoji = "🟡"
-        risk_text = "СРЕДНИЙ РИСК"
+    # 1. Статус компании
+    status = card.get("status", "")
+    if "Действующ" in status:
+        risk_factors.append(("✅", "Статус", "Действующая"))
+    elif "Ликвид" in status:
+        risk_factors.append(("🔴", "Статус", "Ликвидирована"))
+        overall_risk = "high"
+    elif status:
+        risk_factors.append(("🟡", "Статус", status))
+    else:
+        risk_factors.append(("⚠️", "Статус", "Неизвестен"))
     
-    # Формируем отчёт
+    # 2. Возраст компании
+    reg_date = card.get("reg_date", "")
+    if reg_date:
+        try:
+            if "." in reg_date:
+                reg_dt = datetime.strptime(reg_date, "%d.%m.%Y")
+            elif "-" in reg_date:
+                reg_dt = datetime.strptime(reg_date[:10], "%Y-%m-%d")
+            else:
+                reg_dt = None
+            if reg_dt:
+                age_years = (datetime.now() - reg_dt).days // 365
+                if age_years >= 5:
+                    risk_factors.append(("✅", "Возраст", f"{age_years} лет"))
+                elif age_years >= 2:
+                    risk_factors.append(("🟡", "Возраст", f"{age_years} года"))
+                else:
+                    risk_factors.append(("🔴", "Возраст", f"Менее 2 лет (молодая)"))
+                    overall_risk = "medium" if overall_risk == "low" else overall_risk
+        except:
+            pass
+    
+    # 3. Руководитель
+    director = card.get("director", "")
+    director_date = card.get("director_date", "")
+    if director:
+        if director_date:
+            risk_factors.append(("✅", "Руководитель", f"Назначен {director_date[:10]}"))
+        else:
+            risk_factors.append(("✅", "Руководитель", "Назначен"))
+    else:
+        risk_factors.append(("🔴", "Руководитель", "Не указан"))
+        overall_risk = "medium" if overall_risk == "low" else overall_risk
+    
+    # 4. Адрес
+    address = card.get("address", "")
+    if address and len(str(address)) > 10:
+        risk_factors.append(("✅", "Адрес", "Указан"))
+    else:
+        risk_factors.append(("⚠️", "Адрес", "Не указан"))
+    
+    # 5. ФССП
+    if fssp["count"] > 0:
+        if fssp["total_sum"] > 500000:
+            risk_factors.append(("🔴", "ФССП", f"{fssp['count']} производств ({format_number(fssp['total_sum'])})"))
+            overall_risk = "high"
+        else:
+            risk_factors.append(("🟡", "ФССП", f"{fssp['count']} производств"))
+            overall_risk = "medium" if overall_risk == "low" else overall_risk
+    else:
+        risk_factors.append(("✅", "ФССП", "Исполнительных производств нет"))
+    
+    # 6. Арбитраж
+    if arb["total"] > 0:
+        if arb["as_defendant"] > 5:
+            risk_factors.append(("🔴", "Арбитраж", f"{arb['total']} дел (ответчик: {arb['as_defendant']})"))
+            overall_risk = "high"
+        elif arb["as_defendant"] > 0:
+            risk_factors.append(("🟡", "Арбитраж", f"{arb['total']} дел"))
+        else:
+            risk_factors.append(("✅", "Арбитраж", f"{arb['total']} дел (только истец)"))
+    else:
+        risk_factors.append(("✅", "Арбитраж", "Дел не найдено"))
+    
+    # Общий риск
+    risk_map = {"low": ("🟢", "НИЗКИЙ РИСК"), "medium": ("🟡", "СРЕДНИЙ РИСК"), "high": ("🔴", "ВЫСОКИЙ РИСК")}
+    risk_emoji, risk_text = risk_map[overall_risk]
+    
+    # === ФОРМИРУЕМ ОТЧЁТ ===
     lines = [
         f"{risk_emoji} **{risk_text}**",
         f"",
-        f"**{card.get('name', card.get('full_name', 'Компания'))}**",
+        f"**{card.get('name') or card.get('full_name', 'Компания')}**",
         f"ИНН: {card.get('inn', 'Н/Д')}",
+        f"",
+        f"📊 **Светофор рисков:**",
     ]
     
-    # Статус
-    status = card.get("status", "")
-    if status:
-        status_emoji = "✅" if "Действующ" in status else "❌"
-        lines.append(f"{status_emoji} Статус: {status}")
-    
-    # Рейтинг
-    if rating.get("index"):
-        lines.append(f"📊 Индекс надёжности: **{rating['index']}** ({rating.get('reliability', '')})")
+    for emoji, name, value in risk_factors:
+        lines.append(f"  {emoji} {name}: {value}")
     
     # Финансы
     lines.append(f"\n💰 **Финансы:**")
     if finances.get("has_data"):
         lines.append(f"  📈 Выручка: {format_number(finances['revenue'])}")
         lines.append(f"  📊 Прибыль: {format_number(finances['profit'])}")
-        if finances.get("taxes_paid"):
+        if finances.get("taxes_paid") and float(finances.get("taxes_paid") or 0) > 0:
             lines.append(f"  🏛 Уплачено налогов: {format_number(finances['taxes_paid'])}")
-        if finances.get("tax_debt") and float(finances["tax_debt"]) > 0:
+        if finances.get("tax_debt") and float(finances.get("tax_debt") or 0) > 0:
             lines.append(f"  ⚠️ Долг по налогам: {format_number(finances['tax_debt'])}")
         if finances.get("employees"):
             lines.append(f"  👥 Сотрудников: {finances['employees']}")
     else:
-        lines.append(f"  Данных нет")
-    
-    # ФССП
-    if fssp["count"] > 0:
-        emoji = "🔴" if fssp["total_sum"] > 100000 else "🟡"
-        lines.append(f"\n{emoji} **ФССП:** {fssp['count']} производств на {format_number(fssp['total_sum'])}")
-    else:
-        lines.append(f"\n✅ **ФССП:** Исполнительных производств нет")
-    
-    # Арбитраж
-    if arb["total"] > 0:
-        emoji = "🔴" if arb["as_defendant"] > 3 else ("🟡" if arb["as_defendant"] > 0 else "🟢")
-        lines.append(f"\n{emoji} **Арбитраж:** {arb['total']} дел")
-        if arb["as_plaintiff"]:
-            lines.append(f"  📤 Истец: {arb['as_plaintiff']}")
-        if arb["as_defendant"]:
-            lines.append(f"  📥 Ответчик: {arb['as_defendant']}")
-    else:
-        lines.append(f"\n✅ **Арбитраж:** Дел не найдено")
+        lines.append(f"  📈 Выручка: Данных нет")
+        lines.append(f"  📊 Прибыль: Данных нет")
     
     # Связанные компании
     if affiliates:
-        lines.append(f"\n🔗 **Связанные компании:** {len(affiliates)}")
-        for comp in affiliates[:3]:
+        lines.append(f"\n🔗 **Связанные компании:**")
+        lines.append(f"Руководитель связан еще с {len(affiliates)} компаниями:")
+        for comp in affiliates[:5]:
             status_emoji = "🟢" if "Действующ" in comp.get("status", "") else "🔴"
-            lines.append(f"  {status_emoji} {comp['name'][:30]}")
+            name_short = comp['name'][:35] if len(comp.get('name', '')) > 35 else comp.get('name', '?')
+            lines.append(f"  {status_emoji} {name_short} (ИНН: {comp.get('inn', '?')})")
     
     # Реквизиты
     lines.append(f"\n📋 **Реквизиты:**")
     lines.append(f"  ОГРН: {card.get('ogrn', 'Н/Д')}")
-    if card.get("director"):
-        lines.append(f"  👤 Руководитель: {card['director']}")
-    if card.get("address"):
-        lines.append(f"  📍 Адрес: {card['address'][:50]}...")
+    if director:
+        lines.append(f"  👤 Руководитель: {director}")
+    if address:
+        addr_short = str(address)[:55] + "..." if len(str(address)) > 55 else address
+        lines.append(f"  📍 Адрес: {addr_short}")
     if card.get("okved"):
-        lines.append(f"  🏭 ОКВЭД: {card['okved']} - {card.get('okved_name', '')[:40]}")
+        okved_name = card.get('okved_name', '')[:30]
+        lines.append(f"  🏭 ОКВЭД: {card['okved']} - {okved_name}")
     
     lines.append(f"\n_Отчёт: {datetime.now().strftime('%d.%m.%Y %H:%M')}_")
     
