@@ -22,6 +22,7 @@ from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
 from pdf_generator import generate_pdf_report
 from api_assist import check_company_extended, format_extended_report
+from zachestnyibiznes import get_company_data, format_company_report, parse_card, parse_fssp, parse_arbitration, parse_affiliates
 from payment import create_payment, check_payment_status, get_tariff_days, TARIFFS
 
 load_dotenv()
@@ -897,60 +898,49 @@ async def check_company(msg: Message, state: FSMContext):
     await msg.answer(f"⏳ Ищу компанию... ({left})")
     
     try:
-        d = Dadata(os.getenv("DADATA_API_KEY"))
-        result = d.find_by_id("party", msg.text)
+        # Используем новый API ЗАЧЕСТНЫЙБИЗНЕС
+        result = get_company_data(msg.text)
         
-        if not result:
-            await msg.answer("❌ Компания с таким ИНН не найдена.")
+        if not result.get("success"):
+            await msg.answer(f"❌ {result.get('error', 'Компания не найдена')}")
             return
         
-        data = result[0]["data"]
-        inn = data.get("inn", msg.text)
-        company_name = data.get("name", {}).get("short_with_opf", "Неизвестно")
+        # Парсим данные
+        data = result.get("data", {})
+        card = parse_card(data)
         
-        # Анализ рисков
-        risk_emoji, risk_text, factors = analyze_risks(data)
-        risk_level = "high" if "Высокий" in risk_text else ("medium" if "Средний" in risk_text else "low")
+        inn = card.get("inn", msg.text)
+        company_name = card.get("name") or card.get("full_name", "Неизвестно")
+        
+        # Определяем уровень риска на основе ФССП и арбитража
+        fssp = parse_fssp(data)
+        arb = parse_arbitration(data)
+        affiliates = parse_affiliates(data)
+        
+        # Определяем риск
+        if fssp["count"] > 3 or fssp["total_sum"] > 500000:
+            risk_level = "high"
+        elif arb["as_defendant"] > 5 or fssp["count"] > 0:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
         
         # Сохраняем в историю
         add_check_history(uid, inn, company_name, risk_level)
         
-        # Базовый отчёт (название, светофор, финансы)
-        report = format_risk_report(data)
+        # Формируем отчёт с помощью нового модуля
+        report = format_company_report(result)
         
-        # Получаем связанные компании
-        mgr = data.get("management", {}).get("name", "")
-        affs = []
-        if mgr:
-            affs = find_affiliated_companies(mgr, exclude_inn=inn)
-        
-        # Расширенная проверка (ФССП, Арбитраж, ФНС)
-        extended_data = check_company_extended(inn, mgr)
-        extended_report = format_extended_report(extended_data)
-        
-        # Добавляем расширенные данные ПОСЛЕ финансов
-        report += extended_report
-        
-        # Добавляем связанные компании
-        if affs:
-            report += format_affiliates_report(mgr, affs)
-        
-        # Добавляем директора, адрес, ОКВЭД и дату в конце
-        from okved import get_okved_name
-        address = data.get("address", {}).get("value", "Не указан") if isinstance(data.get("address"), dict) else "Не указан"
-        okved_code = data.get("okved", "Н/Д")
-        okved_name = get_okved_name(okved_code)
-        okved_full = f"{okved_code}" + (f" - {okved_name}" if okved_name else "")
-        
-        from datetime import datetime
-        report += f"\n\n**👤 Руководитель:** {mgr or 'Не указан'}"
-        report += f"\n**📍 Адрес:** {address}"
-        report += f"\n**🏭 ОКВЭД:** {okved_full}"
-        report += f"\n\n_Отчет сформирован: {datetime.now().strftime('%d.%m.%Y %H:%M')}_"
-        
-        # Кешируем данные для PDF (включая affiliates и extended)
+        # Кешируем данные для PDF
         cache_key = f"{uid}_{inn}"
-        pdf_data_cache[cache_key] = {'data': data, 'affiliates': affs, 'extended': extended_data, 'company_name': company_name}
+        pdf_data_cache[cache_key] = {
+            'data': data,
+            'affiliates': affiliates,
+            'company_name': company_name,
+            'card': card,
+            'fssp': fssp,
+            'arbitration': arb
+        }
         
         # Кнопки для PDF и избранного
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
