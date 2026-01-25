@@ -22,7 +22,7 @@ from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
 from pdf_generator import generate_pdf_report
 from api_assist import check_company_extended, format_extended_report
-from zachestnyibiznes import get_company_data, format_company_report, parse_card, parse_fssp, parse_arbitration, parse_affiliates, parse_finances
+from zachestnyibiznes import get_company_data, format_company_report, parse_card, parse_fssp, parse_arbitration, parse_affiliates, parse_finances, parse_contacts
 from payment import create_payment, check_payment_status, get_tariff_days, TARIFFS
 
 load_dotenv()
@@ -852,11 +852,12 @@ async def cb_download_pdf(callback: CallbackQuery):
     fssp = cached.get('fssp', None)
     arbitration = cached.get('arbitration', None)
     finances = cached.get('finances', None)
+    contacts = cached.get('contacts', None)
     
     try:
         filepath = generate_pdf_report(
             data, user_id, affiliates, extended_data,
-            card=card, fssp=fssp, arbitration=arbitration, finances=finances
+            card=card, fssp=fssp, arbitration=arbitration, finances=finances, contacts=contacts
         )
         pdf_file = FSInputFile(filepath)
         await callback.message.answer_document(
@@ -941,6 +942,9 @@ async def check_company(msg: Message, state: FSMContext):
         # Формируем отчёт с помощью нового модуля
         report = format_company_report(result)
         
+        # Парсим контакты для PDF
+        contacts = parse_contacts(data)
+        
         # Кешируем данные для PDF
         cache_key = f"{uid}_{inn}"
         pdf_data_cache[cache_key] = {
@@ -950,7 +954,8 @@ async def check_company(msg: Message, state: FSMContext):
             'card': card,
             'fssp': fssp,
             'arbitration': arb,
-            'finances': finances
+            'finances': finances,
+            'contacts': contacts
         }
         
         # Кнопки для PDF и избранного

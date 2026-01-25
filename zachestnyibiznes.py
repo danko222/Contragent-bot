@@ -12,8 +12,8 @@ from datetime import datetime
 
 BASE_URL = "https://zachestnyibiznesapi.ru/paid/data"
 
-# Оптимальный набор методов (экономия запросов)
-DEFAULT_METHODS = "card,fs-fns,fssp-list,rating,court-arbitration,affilation-company"
+# Оптимальный набор методов
+DEFAULT_METHODS = "card,fs-fns,fssp-list,rating,court-arbitration,affilation-company,contacts"
 
 
 def get_api_key() -> str:
@@ -228,22 +228,70 @@ def parse_arbitration(data: Dict) -> Dict[str, Any]:
 
 def parse_affiliates(data: Dict) -> list:
     """Парсит связанные компании."""
-    aff = data.get("affilation-company", {}).get("body", {})
-    if not aff:
-        aff = data.get("affilation-company", {})
+    aff = data.get("affilation-company", {})
     
-    companies = aff.get("Компании", [])
+    # API возвращает данные в body.docs
+    body = aff.get("body", {})
+    if isinstance(body, dict):
+        companies = body.get("docs", [])
+    else:
+        companies = []
+    
     result = []
-    
     for comp in companies[:10]:
         result.append({
-            "name": comp.get("Наименование", ""),
+            "name": comp.get("НаимЮЛСокр", comp.get("НаимЮЛПолн", "")),
             "inn": comp.get("ИНН", ""),
-            "status": comp.get("Статус", ""),
-            "role": comp.get("Роль", ""),
+            "status": comp.get("Активность", ""),
+            "address": comp.get("Адрес", ""),
+            "okved": comp.get("КодОКВЭД", ""),
         })
     
     return result
+
+
+def parse_contacts(data: Dict) -> Dict[str, Any]:
+    """Парсит контактные данные."""
+    contacts = data.get("contacts", {}).get("body", {})
+    if not contacts:
+        contacts = data.get("contacts", {})
+    
+    phones_raw = contacts.get("ТелВсе", "")
+    emails_raw = contacts.get("EmailВсе", "")
+    sites_raw = contacts.get("СайтВсе", "")
+    
+    # Разбираем телефоны (берём первые 3 уникальных)
+    phones = []
+    if phones_raw:
+        for p in phones_raw.split(";")[:5]:
+            p = p.strip()
+            if p and len(p) > 5 and p not in phones:
+                phones.append(p)
+    
+    # Разбираем email
+    emails = []
+    if emails_raw:
+        for e in emails_raw.split(";")[:3]:
+            e = e.strip()
+            if e and "@" in e and e not in emails:
+                emails.append(e)
+    
+    # Разбираем сайты
+    sites = []
+    if sites_raw:
+        for s in sites_raw.split(";")[:3]:
+            s = s.strip()
+            if s and "." in s and s not in sites:
+                sites.append(s)
+    
+    return {
+        "phones": phones[:3],
+        "emails": emails[:2],
+        "sites": sites[:2],
+        "has_data": bool(phones or emails or sites)
+    }
+
+
 
 
 # ============ Форматирование отчёта ============
@@ -402,6 +450,19 @@ def format_company_report(result: Dict[str, Any]) -> str:
             status_emoji = "🟢" if "Действующ" in comp.get("status", "") else "🔴"
             name_short = comp['name'][:35] if len(comp.get('name', '')) > 35 else comp.get('name', '?')
             lines.append(f"  {status_emoji} {name_short} (ИНН: {comp.get('inn', '?')})")
+        if len(affiliates) > 5:
+            lines.append(f"  ... и еще {len(affiliates) - 5} компаний")
+    
+    # Контакты
+    contacts = parse_contacts(data)
+    if contacts.get("has_data"):
+        lines.append(f"\n📞 **Контакты:**")
+        if contacts.get("phones"):
+            lines.append(f"  ☎️ {', '.join(contacts['phones'][:2])}")
+        if contacts.get("emails"):
+            lines.append(f"  ✉️ {', '.join(contacts['emails'])}")
+        if contacts.get("sites"):
+            lines.append(f"  🌐 {', '.join(contacts['sites'])}")
     
     # Реквизиты
     lines.append(f"\n📋 **Реквизиты:**")
@@ -414,6 +475,8 @@ def format_company_report(result: Dict[str, Any]) -> str:
     if card.get("okved"):
         okved_name = card.get('okved_name', '')[:30]
         lines.append(f"  🏭 ОКВЭД: {card['okved']} - {okved_name}")
+    if card.get("capital") and float(card.get("capital") or 0) > 0:
+        lines.append(f"  💵 Уставный капитал: {format_number(card['capital'])}")
     
     lines.append(f"\n_Отчёт: {datetime.now().strftime('%d.%m.%Y %H:%M')}_")
     

@@ -56,7 +56,8 @@ def generate_pdf_report(
     card: Dict = None,
     fssp: Dict = None,
     arbitration: Dict = None,
-    finances: Dict = None
+    finances: Dict = None,
+    contacts: Dict = None
 ) -> str:
     """
     Генерирует PDF-отчет о компании.
@@ -343,6 +344,28 @@ def generate_pdf_report(
             elements.append(aff_table)
     else:
         elements.append(Paragraph("Связанных компаний не найдено или данные недоступны", normal_style))
+    
+    # === КОНТАКТЫ ===
+    if contacts and contacts.get("has_data"):
+        elements.append(Paragraph("<b>КОНТАКТНЫЕ ДАННЫЕ</b>", heading_style))
+        
+        contact_info = []
+        if contacts.get("phones"):
+            contact_info.append(["Телефоны:", ", ".join(contacts["phones"][:3])])
+        if contacts.get("emails"):
+            contact_info.append(["Email:", ", ".join(contacts["emails"][:2])])
+        if contacts.get("sites"):
+            contact_info.append(["Веб-сайт:", ", ".join(contacts["sites"][:2])])
+        
+        if contact_info:
+            contact_table = Table(contact_info, colWidths=[4*cm, 13*cm])
+            contact_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, -1), font_name),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('TEXTCOLOR', (0, 0), (0, -1), colors.grey),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ]))
+            elements.append(contact_table)
     
     # === ПОДПИСЬ ===
     elements.append(Spacer(1, 30))
