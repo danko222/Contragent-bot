@@ -22,7 +22,7 @@ from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
 from pdf_generator import generate_pdf_report
 from api_assist import check_company_extended, format_extended_report
-from zachestnyibiznes import get_company_data, format_company_report, parse_card, parse_fssp, parse_arbitration, parse_affiliates
+from zachestnyibiznes import get_company_data, format_company_report, parse_card, parse_fssp, parse_arbitration, parse_affiliates, parse_finances
 from payment import create_payment, check_payment_status, get_tariff_days, TARIFFS
 
 load_dotenv()
@@ -847,8 +847,17 @@ async def cb_download_pdf(callback: CallbackQuery):
     affiliates = cached.get('affiliates', None)
     extended_data = cached.get('extended', None)
     
+    # Новые данные ZaChestnyiBiznes
+    card = cached.get('card', None)
+    fssp = cached.get('fssp', None)
+    arbitration = cached.get('arbitration', None)
+    finances = cached.get('finances', None)
+    
     try:
-        filepath = generate_pdf_report(data, user_id, affiliates, extended_data)
+        filepath = generate_pdf_report(
+            data, user_id, affiliates, extended_data,
+            card=card, fssp=fssp, arbitration=arbitration, finances=finances
+        )
         pdf_file = FSInputFile(filepath)
         await callback.message.answer_document(
             pdf_file,
@@ -916,6 +925,7 @@ async def check_company(msg: Message, state: FSMContext):
         fssp = parse_fssp(data)
         arb = parse_arbitration(data)
         affiliates = parse_affiliates(data)
+        finances = parse_finances(data)
         
         # Определяем риск
         if fssp["count"] > 3 or fssp["total_sum"] > 500000:
@@ -939,7 +949,8 @@ async def check_company(msg: Message, state: FSMContext):
             'company_name': company_name,
             'card': card,
             'fssp': fssp,
-            'arbitration': arb
+            'arbitration': arb,
+            'finances': finances
         }
         
         # Кнопки для PDF и избранного
