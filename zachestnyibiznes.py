@@ -10,11 +10,15 @@ import requests
 from typing import Dict, Any, Optional
 from datetime import datetime
 
-API_KEY = os.getenv("ZACHESTNYIBIZNES_API_KEY", "")
 BASE_URL = "https://zachestnyibiznesapi.ru/paid/data"
 
 # Оптимальный набор методов (экономия запросов)
 DEFAULT_METHODS = "card,fs-fns,fssp-list,rating,court-arbitration,affilation-company"
+
+
+def get_api_key() -> str:
+    """Получает API ключ (ленивая загрузка после load_dotenv)."""
+    return os.getenv("ZACHESTNYIBIZNES_API_KEY", "")
 
 
 def get_company_data(inn: str, methods: str = None) -> Dict[str, Any]:
@@ -28,7 +32,8 @@ def get_company_data(inn: str, methods: str = None) -> Dict[str, Any]:
     Returns:
         Словарь с данными компании или ошибкой
     """
-    if not API_KEY:
+    api_key = get_api_key()
+    if not api_key:
         return {"error": "API key not configured", "success": False}
     
     methods = methods or DEFAULT_METHODS
@@ -37,7 +42,7 @@ def get_company_data(inn: str, methods: str = None) -> Dict[str, Any]:
         url = f"{BASE_URL}/multiple-methods"
         params = {
             "id": inn,
-            "api_key": API_KEY,
+            "api_key": api_key,
             "list": methods,
             "_format": "json"
         }
@@ -72,14 +77,15 @@ def get_company_data(inn: str, methods: str = None) -> Dict[str, Any]:
 
 def get_single_method(inn: str, method: str) -> Dict[str, Any]:
     """Получает данные одним методом (для отладки или экономии)."""
-    if not API_KEY:
+    api_key = get_api_key()
+    if not api_key:
         return {"error": "API key not configured", "success": False}
     
     try:
         url = f"{BASE_URL}/{method}"
         params = {
             "id": inn,
-            "api_key": API_KEY,
+            "api_key": api_key,
             "_format": "json"
         }
         
