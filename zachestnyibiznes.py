@@ -150,6 +150,8 @@ def parse_card(data: Dict) -> Dict[str, Any]:
         "okved_name": card.get("НаимОКВЭД", ""),
         "capital": card.get("СумКап", 0),
         "employees": card.get("ЧислСотруд", 0),
+        # Финансовый анализ (коэффициенты)
+        "fin_analysis": card.get("АнализФО", {}),
     }
 
 
@@ -561,6 +563,26 @@ def format_company_report(result: Dict[str, Any]) -> str:
                         risk_reasons.append(f"⚠️ Молодая компания ({age_years} года)")
             except:
                 pass
+        
+        # Проверяем финансовые коэффициенты
+        fin_an = card.get("fin_analysis", {})
+        if fin_an:
+            # Коэффициент автономии (должен быть > 0.5)
+            autonom = fin_an.get("Автоном", 0)
+            if isinstance(autonom, (int, float)) and autonom < 0:
+                risk_reasons.append(f"📉 Отрицательная автономия ({autonom:.2f})")
+            elif isinstance(autonom, (int, float)) and autonom < 0.3:
+                risk_reasons.append(f"📉 Низкая автономия ({autonom:.2f})")
+            
+            # Рентабельность собственного капитала
+            rent = fin_an.get("РентСобсКап", 0)
+            if isinstance(rent, (int, float)) and rent < -0.1:
+                risk_reasons.append(f"📉 Убыточность капитала ({rent:.0%})")
+            
+            # Быстрая ликвидность (норма > 1)
+            liq = fin_an.get("БыстрЛиквид", 1)
+            if isinstance(liq, (int, float)) and liq < 0.5:
+                risk_reasons.append(f"📉 Низкая ликвидность ({liq:.2f})")
         
         # Выводим причины
         if risk_reasons:
