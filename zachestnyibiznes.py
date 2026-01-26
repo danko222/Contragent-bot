@@ -154,27 +154,64 @@ def parse_card(data: Dict) -> Dict[str, Any]:
 
 
 def parse_finances(data: Dict) -> Dict[str, Any]:
-    """Парсит финансовые данные из fs-fns."""
+    """Парсит финансовые данные из fs-fns (бухотчётность ФНС)."""
     fs = data.get("fs-fns", {}).get("body", {})
     if not fs:
         fs = data.get("fs-fns", {})
     
-    # Берём последний год
-    years = fs.get("Года", [])
-    if not years:
+    # Новая структура: Документ.ФинРез
+    doc = fs.get("Документ", {})
+    if not doc:
+        # Старая структура на случай другого формата
+        years = fs.get("Года", [])
+        if years and isinstance(years, list):
+            latest = years[0]
+            return {
+                "has_data": True,
+                "year": latest.get("Год", ""),
+                "revenue": latest.get("Выручка", 0),
+                "profit": latest.get("Прибыль", 0),
+                "taxes_paid": latest.get("УплНалога", 0),
+                "tax_debt": latest.get("ЗадолжНалога", 0),
+                "employees": latest.get("СрЧислРаб", 0),
+            }
         return {"has_data": False}
     
-    latest = years[0] if isinstance(years, list) else {}
+    # Получаем год отчёта
+    attrs = doc.get("@attributes", {})
+    year = attrs.get("ОтчетГод", "")
+    
+    # Финансовые результаты
+    fin_res = doc.get("ФинРез", {})
+    
+    # Выручка (в тыс. рублей)
+    revenue_data = fin_res.get("Выруч", {}).get("@attributes", {})
+    revenue = float(revenue_data.get("СумОтч", 0) or 0) * 1000  # тыс -> рубли
+    revenue_prev = float(revenue_data.get("СумПред", 0) or 0) * 1000
+    
+    # Чистая прибыль
+    profit_data = fin_res.get("ЧистПрибУб", {}).get("@attributes", {})
+    profit = float(profit_data.get("СумОтч", 0) or 0) * 1000
+    profit_prev = float(profit_data.get("СумПред", 0) or 0) * 1000
+    
+    # Налог на прибыль (уплачено)
+    tax_data = fin_res.get("ТекНалПриб", {}).get("@attributes", {})
+    taxes_paid = float(tax_data.get("СумОтч", 0) or 0) * 1000
+    
+    # Сотрудники из СвНП если есть
+    sv_np = doc.get("СвНП", {})
+    employees = sv_np.get("@attributes", {}).get("СрЧислРаб", 0) or 0
     
     return {
-        "has_data": True,
-        "year": latest.get("Год", ""),
-        "revenue": latest.get("Выручка", 0),
-        "profit": latest.get("Прибыль", 0),
-        "assets": latest.get("Актив", 0),
-        "taxes_paid": latest.get("УплНалога", 0),
-        "tax_debt": latest.get("ЗадолжНалога", 0),
-        "employees": latest.get("СрЧислРаб", 0),
+        "has_data": revenue > 0 or profit != 0,
+        "year": year,
+        "revenue": revenue,
+        "revenue_prev": revenue_prev,
+        "profit": profit,
+        "profit_prev": profit_prev,
+        "taxes_paid": taxes_paid,
+        "tax_debt": 0,
+        "employees": employees,
     }
 
 
@@ -195,16 +232,21 @@ def parse_fssp(data: Dict) -> Dict[str, Any]:
 
 
 def parse_rating(data: Dict) -> Dict[str, Any]:
-    """Парсит рейтинг ЗАЧЕСТНЫЙБИЗНЕС."""
+    """Парсит официальный рейтинг ЗСК (За Честный Бизнес)."""
     rating = data.get("rating", {}).get("body", {})
     if not rating:
         rating = data.get("rating", {})
     
+    # Официальные поля ЗСК API
     return {
+        "rating_category": rating.get("rating_category", ""),  # низкий/средний/высокий
+        "risk_level": rating.get("risk_level", ""),  # уровень риска
+        "point": rating.get("point", 0),  # балл (1-5)
+        "tax_burn": rating.get("tax_burn", ""),  # налоговая нагрузка
+        "stop": rating.get("stop", False),  # стоп-фактор
+        # Старые поля для совместимости
         "index": rating.get("Индекс", ""),
-        "index_value": rating.get("ИндексЗнач", 0),
         "reliability": rating.get("Надежность", ""),
-        "risk_level": rating.get("УровеньРиска", ""),
     }
 
 
@@ -410,9 +452,28 @@ def format_company_report(result: Dict[str, Any]) -> str:
     else:
         risk_factors.append(("✅", "Арбитраж", "Дел не найдено"))
     
-    # Общий риск
-    risk_map = {"low": ("🟢", "НИЗКИЙ РИСК"), "medium": ("🟡", "СРЕДНИЙ РИСК"), "high": ("🔴", "ВЫСОКИЙ РИСК")}
-    risk_emoji, risk_text = risk_map[overall_risk]
+    # === ОФИЦИАЛЬНЫЙ РЕЙТИНГ ЗСК ===
+    # Используем rating_category от API ЗАЧЕСТНЫЙБИЗНЕС
+    zsk_rating = rating.get("rating_category", "").lower()
+    zsk_risk = rating.get("risk_level", "").lower()
+    zsk_point = rating.get("point", 0)
+    zsk_tax = rating.get("tax_burn", "")
+    
+    # Определяем общий риск по официальному рейтингу ЗСК
+    if zsk_rating == "высокий" or "высок" in zsk_risk:
+        risk_emoji = "🔴"
+        risk_text = "ВЫСОКИЙ РИСК (ЗСК)"
+    elif zsk_rating == "средний" or "средн" in zsk_risk:
+        risk_emoji = "🟡"
+        risk_text = "СРЕДНИЙ РИСК (ЗСК)"
+    elif zsk_rating == "низкий" or "низк" in zsk_risk:
+        risk_emoji = "🟢"
+        risk_text = "НИЗКИЙ РИСК (ЗСК)"
+    else:
+        # Fallback на нашу логику если ЗСК не вернул рейтинг
+        risk_map = {"low": ("🟢", "НИЗКИЙ РИСК"), "medium": ("🟡", "СРЕДНИЙ РИСК"), "high": ("🔴", "ВЫСОКИЙ РИСК")}
+        risk_emoji, risk_text = risk_map[overall_risk]
+    
     
     # === ФОРМИРУЕМ ОТЧЁТ ===
     lines = [
@@ -428,7 +489,10 @@ def format_company_report(result: Dict[str, Any]) -> str:
         lines.append(f"  {emoji} {name}: {value}")
     
     # Финансы
-    lines.append(f"\n💰 **Финансы:**")
+    fin_year = finances.get("year", "")
+    year_suffix = f" ({fin_year})" if fin_year else ""
+    
+    lines.append(f"\n💰 **Финансы{year_suffix}:**")
     if card.get("capital") and float(card.get("capital") or 0) > 0:
         lines.append(f"  💵 Уставный капитал: {format_number(card['capital'])}")
     if finances.get("has_data"):
@@ -444,16 +508,26 @@ def format_company_report(result: Dict[str, Any]) -> str:
         lines.append(f"  📈 Выручка: Данных нет")
         lines.append(f"  📊 Прибыль: Данных нет")
     
-    # Связанные компании
-    if affiliates:
+    # Рейтинг ЗСК (налоговая нагрузка)
+    if zsk_tax:
+        lines.append(f"\n📊 **Рейтинг ЗСК:**")
+        lines.append(f"  🎯 Категория риска: {rating.get('rating_category', 'Н/Д')}")
+        lines.append(f"  📈 Уровень риска: {rating.get('risk_level', 'Н/Д')}")
+        lines.append(f"  💰 Налоговая нагрузка: {zsk_tax}")
+        if zsk_point:
+            lines.append(f"  ⭐ Балл: {zsk_point}/5")
+    
+    # Связанные компании (фильтруем пустые)
+    valid_affiliates = [a for a in affiliates if a.get("name") and a.get("inn")]
+    if valid_affiliates:
         lines.append(f"\n🔗 **Связанные компании:**")
-        lines.append(f"Руководитель связан еще с {len(affiliates)} компаниями:")
-        for comp in affiliates[:5]:
+        lines.append(f"Руководитель связан еще с {len(valid_affiliates)} компаниями:")
+        for comp in valid_affiliates[:5]:
             status_emoji = "🟢" if "Действующ" in comp.get("status", "") else "🔴"
             name_short = comp['name'][:35] if len(comp.get('name', '')) > 35 else comp.get('name', '?')
             lines.append(f"  {status_emoji} {name_short} (ИНН: {comp.get('inn', '?')})")
-        if len(affiliates) > 5:
-            lines.append(f"  ... и еще {len(affiliates) - 5} компаний")
+        if len(valid_affiliates) > 5:
+            lines.append(f"  ... и еще {len(valid_affiliates) - 5} компаний")
     
     # Контакты
     contacts = parse_contacts(data)
