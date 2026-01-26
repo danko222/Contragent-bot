@@ -497,7 +497,7 @@ def format_company_report(result: Dict[str, Any]) -> str:
         lines.append(f"  💵 Уставный капитал: {format_number(card['capital'])}")
     if finances.get("has_data"):
         lines.append(f"  📈 Выручка: {format_number(finances['revenue'])}")
-        lines.append(f"  📊 Прибыль: {format_number(finances['profit'])}")
+        lines.append(f"  💹 Прибыль: {format_number(finances['profit'])}")
         if finances.get("taxes_paid") and float(finances.get("taxes_paid") or 0) > 0:
             lines.append(f"  🏛 Уплачено налогов: {format_number(finances['taxes_paid'])}")
         if finances.get("tax_debt") and float(finances.get("tax_debt") or 0) > 0:
@@ -506,23 +506,23 @@ def format_company_report(result: Dict[str, Any]) -> str:
             lines.append(f"  👥 Сотрудников: {finances['employees']}")
     else:
         # Если нет данных за текущий год
-        if fin_year == "2024":
-            lines.append(f"  ⚠️ Данные за 2025 год ещё не поступили")
         lines.append(f"  📈 Выручка: Данных нет")
-        lines.append(f"  📊 Прибыль: Данных нет")
+        lines.append(f"  💹 Прибыль: Данных нет")
     
-    # Рейтинг ЗСК (с суммой уплаченных налогов)
-    if zsk_rating or zsk_risk:
-        lines.append(f"\n📊 **Рейтинг ЗСК:**")
-        lines.append(f"  🎯 Категория риска: {rating.get('rating_category', 'Н/Д')}")
-        lines.append(f"  📈 Уровень риска: {rating.get('risk_level', 'Н/Д')}")
-        # Показываем фактически уплаченные налоги вместо категории
-        if finances.get("taxes_paid") and float(finances.get("taxes_paid") or 0) > 0:
-            lines.append(f"  🏛 Уплачено налогов ({fin_year}): {format_number(finances['taxes_paid'])}")
-        else:
-            lines.append(f"  🏛 Уплачено налогов: Данных нет")
+    # Рейтинг ЗСК (упрощённый формат)
+    if zsk_rating or zsk_risk or zsk_point:
+        lines.append(f"\n🔍 **Рейтинг ЗСК (За Честный Бизнес):**")
+        # Показываем только балл и общее заключение
         if zsk_point:
-            lines.append(f"  ⭐ Балл: {zsk_point}/5")
+            lines.append(f"  ⭐ Балл надёжности: {zsk_point}/5")
+        # Показываем уплаченные налоги с логикой года
+        if finances.get("taxes_paid") and float(finances.get("taxes_paid") or 0) > 0:
+            if fin_year == "2024":
+                lines.append(f"  🏛 Налоги: 2025 нет данных — {format_number(finances['taxes_paid'])} ({fin_year})")
+            else:
+                lines.append(f"  🏛 Налоги ({fin_year}): {format_number(finances['taxes_paid'])}")
+        else:
+            lines.append(f"  🏛 Налоги: Данных нет")
     
     # Связанные компании (фильтруем пустые)
     valid_affiliates = [a for a in affiliates if a.get("name") and a.get("inn")]
