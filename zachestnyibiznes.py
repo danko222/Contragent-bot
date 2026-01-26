@@ -509,20 +509,73 @@ def format_company_report(result: Dict[str, Any]) -> str:
         lines.append(f"  📈 Выручка: Данных нет")
         lines.append(f"  💹 Прибыль: Данных нет")
     
-    # Рейтинг ЗСК (упрощённый формат)
-    if zsk_rating or zsk_risk or zsk_point:
+    # === РЕЙТИНГ ЗСК с причинами риска ===
+    zsk_stop = rating.get("stop", False)
+    
+    if zsk_rating or zsk_risk or zsk_point or zsk_stop:
         lines.append(f"\n🔍 **Рейтинг ЗСК (За Честный Бизнес):**")
-        # Показываем только балл и общее заключение
-        if zsk_point:
-            lines.append(f"  ⭐ Балл надёжности: {zsk_point}/5")
-        # Показываем уплаченные налоги с логикой года
+        
+        # Балл надёжности
+        if zsk_point and zsk_point > 0:
+            stars = "⭐" * int(zsk_point)
+            lines.append(f"  {stars} Балл надёжности: {zsk_point}/5")
+        elif zsk_stop:
+            lines.append(f"  ❌ Балл надёжности: 0/5 (стоп-фактор)")
+        
+        # Генерируем причины риска на основе данных
+        risk_reasons = []
+        
+        # Проверяем стоп-фактор
+        if zsk_stop:
+            risk_reasons.append("⛔ Обнаружен стоп-фактор ЗСК")
+        
+        # Проверяем ФССП
+        if fssp["count"] > 0:
+            if fssp["total_sum"] > 500000:
+                risk_reasons.append(f"⚠️ ФССП: {fssp['count']} производств на {format_number(fssp['total_sum'])}")
+            else:
+                risk_reasons.append(f"⚠️ ФССП: {fssp['count']} производств")
+        
+        # Проверяем арбитраж
+        if arb["as_defendant"] > 3:
+            risk_reasons.append(f"⚠️ Арбитраж: ответчик в {arb['as_defendant']} делах")
+        elif arb["as_defendant"] > 0:
+            risk_reasons.append(f"ℹ️ Арбитраж: ответчик в {arb['as_defendant']} делах")
+        
+        # Проверяем возраст компании (молодая = риск)
+        if reg_date:
+            try:
+                if "." in reg_date:
+                    reg_dt = datetime.strptime(reg_date, "%d.%m.%Y")
+                elif "-" in reg_date:
+                    reg_dt = datetime.strptime(reg_date[:10], "%Y-%m-%d")
+                else:
+                    reg_dt = None
+                if reg_dt:
+                    age_years = (datetime.now() - reg_dt).days // 365
+                    if age_years < 2:
+                        risk_reasons.append(f"⚠️ Молодая компания ({age_years} года)")
+            except:
+                pass
+        
+        # Выводим причины
+        if risk_reasons:
+            lines.append(f"  📋 Причины риска:")
+            for reason in risk_reasons[:4]:
+                lines.append(f"    {reason}")
+        elif "высок" in zsk_risk.lower():
+            lines.append(f"  ⚠️ Высокий риск по данным ЗСК")
+        elif "средн" in zsk_risk.lower():
+            lines.append(f"  ℹ️ Средний уровень риска")
+        else:
+            lines.append(f"  ✅ Существенных рисков не выявлено")
+        
+        # Налоги
         if finances.get("taxes_paid") and float(finances.get("taxes_paid") or 0) > 0:
             if fin_year == "2024":
-                lines.append(f"  🏛 Налоги: 2025 нет данных — {format_number(finances['taxes_paid'])} ({fin_year})")
+                lines.append(f"  🏛 Налоги: 2025 нет — {format_number(finances['taxes_paid'])} ({fin_year})")
             else:
                 lines.append(f"  🏛 Налоги ({fin_year}): {format_number(finances['taxes_paid'])}")
-        else:
-            lines.append(f"  🏛 Налоги: Данных нет")
     
     # Связанные компании (фильтруем пустые)
     valid_affiliates = [a for a in affiliates if a.get("name") and a.get("inn")]
