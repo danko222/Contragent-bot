@@ -313,24 +313,31 @@ def generate_pdf_report(
     # === СВЯЗАННЫЕ КОМПАНИИ ===
     elements.append(Paragraph("<b>СВЯЗАННЫЕ КОМПАНИИ</b>", heading_style))
     
-    if affiliates_list and len(affiliates_list) > 0:
-        count = len(affiliates_list)
+    # Фильтруем только действующие компании с данными
+    active_affiliates = []
+    if affiliates_list:
+        for aff in affiliates_list:
+            if isinstance(aff, dict):
+                aff_name = aff.get('name', aff.get('Наименование', ''))
+                aff_inn = aff.get('inn', aff.get('ИНН', ''))
+                aff_status = str(aff.get('status', aff.get('Статус', '')))
+                # Только действующие компании с именем и ИНН
+                if aff_name and aff_inn and "Действ" in aff_status:
+                    active_affiliates.append(aff)
+    
+    if active_affiliates:
+        count = len(active_affiliates)
         risk_text = "МАССОВЫЙ ДИРЕКТОР" if count >= 10 else ("Много связей" if count >= 5 else "Норма")
-        elements.append(Paragraph(f"Руководитель связан еще с {count} компаниями. Оценка: {risk_text}", normal_style))
+        elements.append(Paragraph(f"Руководитель связан с {count} действующими компаниями. Оценка: {risk_text}", normal_style))
         
         aff_data = [["Компания", "ИНН", "Статус"]]
-        for aff in affiliates_list[:10]:
-            if isinstance(aff, dict):
-                aff_name = aff.get('name', aff.get('Наименование', '?'))
-                aff_inn = aff.get('inn', aff.get('ИНН', '?'))
-                aff_status = aff.get('status', aff.get('Статус', ''))
-                status_text = "Действует" if "Действ" in str(aff_status) else "Не действует"
-            else:
-                continue
+        for aff in active_affiliates[:10]:
+            aff_name = aff.get('name', aff.get('Наименование', '?'))
+            aff_inn = aff.get('inn', aff.get('ИНН', '?'))
             
             if len(aff_name) > 35:
                 aff_name = aff_name[:35] + "..."
-            aff_data.append([aff_name, aff_inn, status_text])
+            aff_data.append([aff_name, aff_inn, "Действует"])
         
         if len(aff_data) > 1:
             aff_table = Table(aff_data, colWidths=[9*cm, 4*cm, 4*cm])
@@ -343,7 +350,7 @@ def generate_pdf_report(
             ]))
             elements.append(aff_table)
     else:
-        elements.append(Paragraph("Связанных компаний не найдено или данные недоступны", normal_style))
+        elements.append(Paragraph("Действующих связанных компаний не найдено", normal_style))
     
     # === КОНТАКТЫ ===
     if contacts and contacts.get("has_data"):

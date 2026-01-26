@@ -505,15 +505,22 @@ def format_company_report(result: Dict[str, Any]) -> str:
         if finances.get("employees"):
             lines.append(f"  👥 Сотрудников: {finances['employees']}")
     else:
+        # Если нет данных за текущий год
+        if fin_year == "2024":
+            lines.append(f"  ⚠️ Данные за 2025 год ещё не поступили")
         lines.append(f"  📈 Выручка: Данных нет")
         lines.append(f"  📊 Прибыль: Данных нет")
     
-    # Рейтинг ЗСК (налоговая нагрузка)
-    if zsk_tax:
+    # Рейтинг ЗСК (с суммой уплаченных налогов)
+    if zsk_rating or zsk_risk:
         lines.append(f"\n📊 **Рейтинг ЗСК:**")
         lines.append(f"  🎯 Категория риска: {rating.get('rating_category', 'Н/Д')}")
         lines.append(f"  📈 Уровень риска: {rating.get('risk_level', 'Н/Д')}")
-        lines.append(f"  💰 Налоговая нагрузка: {zsk_tax}")
+        # Показываем фактически уплаченные налоги вместо категории
+        if finances.get("taxes_paid") and float(finances.get("taxes_paid") or 0) > 0:
+            lines.append(f"  🏛 Уплачено налогов ({fin_year}): {format_number(finances['taxes_paid'])}")
+        else:
+            lines.append(f"  🏛 Уплачено налогов: Данных нет")
         if zsk_point:
             lines.append(f"  ⭐ Балл: {zsk_point}/5")
     
