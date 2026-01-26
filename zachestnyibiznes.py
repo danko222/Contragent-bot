@@ -512,15 +512,19 @@ def format_company_report(result: Dict[str, Any]) -> str:
     # === РЕЙТИНГ ЗСК с причинами риска ===
     zsk_stop = rating.get("stop", False)
     
-    if zsk_rating or zsk_risk or zsk_point or zsk_stop:
-        lines.append(f"\n🔍 **Рейтинг ЗСК (За Честный Бизнес):**")
+    # Показываем секицю ЗСК только если есть какие-то данные
+    has_zsk_data = zsk_rating or zsk_risk or zsk_point or zsk_stop
+    
+    if has_zsk_data or "высок" in risk_text.lower() or "средн" in risk_text.lower():
+        lines.append(f"\n🔍 **Рейтинг ЗСК:**")
         
-        # Балл надёжности
-        if zsk_point and zsk_point > 0:
-            stars = "⭐" * int(zsk_point)
-            lines.append(f"  {stars} Балл надёжности: {zsk_point}/5")
+        # Балл надёжности (макс 5 звёзд)
+        if zsk_point and int(zsk_point) > 0:
+            star_count = min(int(zsk_point), 5)  # Максимум 5 звёзд
+            stars = "⭐" * star_count
+            lines.append(f"  {stars} Балл: {star_count}/5")
         elif zsk_stop:
-            lines.append(f"  ❌ Балл надёжности: 0/5 (стоп-фактор)")
+            lines.append(f"  ❌ Балл: 0/5 (стоп-фактор)")
         
         # Генерируем причины риска на основе данных
         risk_reasons = []
