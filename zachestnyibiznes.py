@@ -51,11 +51,21 @@ def get_company_data(inn: str, methods: str = None) -> Dict[str, Any]:
         response.raise_for_status()
         data = response.json()
         
+        # Для ИП API может вернуть список [{card:...}, {card:...}] вместо словаря
+        # Объединяем в один словарь
+        if isinstance(data, list):
+            merged = {}
+            for item in data:
+                if isinstance(item, dict):
+                    merged.update(item)
+            data = merged
+        
         # Проверяем общую ошибку (например, "Данные не найдены")
-        if data.get("status") == "260":
-            return {"error": "Компания не найдена", "success": False}
-        if data.get("status") == "error" or (data.get("message") and "ошибка" in data.get("message", "").lower()):
-            return {"error": data.get("message", "Unknown error"), "success": False}
+        if isinstance(data, dict):
+            if data.get("status") == "260":
+                return {"error": "Компания не найдена", "success": False}
+            if data.get("status") == "error" or (data.get("message") and "ошибка" in data.get("message", "").lower()):
+                return {"error": data.get("message", "Unknown error"), "success": False}
         
         # multiple-methods возвращает каждый метод как ключ на верхнем уровне
         # Например: {"card": {...}, "fs-fns": {...}, "rating": {...}}
@@ -134,22 +144,27 @@ def parse_card(data: Dict) -> Dict[str, Any]:
     else:
         address = ""
     
+    # Определяем тип: ИП или юрлицо
+    is_ip = card.get("ТипДокумента") == "ip"
+    
     return {
-        "name": card.get("НаимЮЛСокр", "") or card.get("name", ""),
-        "full_name": card.get("НаимЮЛПолн", "") or card.get("fullName", ""),
-        "inn": card.get("ИНН", ""),
-        "ogrn": card.get("ОГРН", ""),
+        # Для ИП: ФИО, для юрлица: НаимЮЛСокр
+        "name": card.get("НаимЮЛСокр", "") or card.get("ФИО", "") or card.get("name", ""),
+        "full_name": card.get("НаимЮЛПолн", "") or card.get("ФИО", "") or card.get("fullName", ""),
+        "inn": card.get("ИНН", "") or card.get("ИНИП", ""),
+        "ogrn": card.get("ОГРН", "") or card.get("ОГРНИП", ""),
         "kpp": card.get("КПП", ""),
-        "status": card.get("Активность", "") or card.get("СвСтатус", ""),
-        "reg_date": card.get("ДатаОГРН", "") or card.get("ОбрДата", ""),
+        "status": card.get("Активность", "") or card.get("СвСтатус", "") or ("Действующий" if not card.get("ДатаПрекр") else "Прекращён"),
+        "reg_date": card.get("ДатаОГРН", "") or card.get("ДатаОГРНИП", "") or card.get("ОбрДата", ""),
         "address": address,
-        "director": director_name,
+        "director": director_name or (card.get("ФИО", "") if is_ip else ""),  # Для ИП - он сам директор
         "director_inn": director_inn,
         "director_date": director_date,
         "okved": card.get("КодОКВЭД", ""),
         "okved_name": card.get("НаимОКВЭД", ""),
         "capital": card.get("СумКап", 0),
         "employees": card.get("ЧислСотруд", 0),
+        "is_ip": is_ip,
         # Финансовый анализ (коэффициенты)
         "fin_analysis": card.get("АнализФО", {}),
     }
